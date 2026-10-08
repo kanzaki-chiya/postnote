@@ -1,6 +1,6 @@
 {
   "name": "postnote",
-  "version": "0.4.4",
+  "version": "0.4.5",
   "private": true,
   "type": "module",
   "description": "把值得留下的推文，存成一张图。",
