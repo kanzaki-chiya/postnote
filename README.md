@@ -6,9 +6,6 @@
 
 当前版本：**0.4.4**
 
-> 本项目的部分实现迁移自 `Twitter-Long-Image-Generator` 1.9.x 的代码与规则（MIT），
-> 版权与许可信息见 [LICENSE](./LICENSE)。
-
 ---
 
 ## 功能
