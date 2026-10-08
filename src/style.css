@@ -1,0 +1,591 @@
+/*
+ * PostNote styles.
+ *
+ * Host-page rules are limited to the entry slot inside X's interaction bar. The
+ * card, the offscreen capture stage, and the toasts are PostNote's own, and are
+ * unaffected by how a post happens to be rendered.
+ */
+
+.postnote-entry-slot {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  /* --postnote-icon-size / --postnote-box-size are measured from the row's own
+     icons by syncEntry(); these are the values X uses in a plain timeline row. */
+  width: var(--postnote-box-size, 34.75px);
+  height: var(--postnote-box-size, 34.75px);
+}
+
+/* The entry that sits next to the "⋯" control when the action bar has no room. */
+.postnote-entry-slot.in-head {
+  width: var(--postnote-box-size, 30.25px);
+  height: var(--postnote-box-size, 30.25px);
+}
+
+.postnote-entry {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--postnote-box-size, 34.75px);
+  height: var(--postnote-box-size, 34.75px);
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 9999px;
+  background: transparent;
+  color: var(--postnote-entry-color, rgb(113, 118, 123));
+  cursor: pointer;
+}
+
+.postnote-entry:hover {
+  color: rgb(29, 155, 240);
+  background-color: rgba(29, 155, 240, 0.1);
+}
+
+.postnote-entry:focus-visible {
+  outline: 2px solid rgb(29, 155, 240);
+  outline-offset: 2px;
+}
+
+.postnote-entry.is-busy,
+.postnote-entry.is-busy:hover {
+  cursor: wait;
+  opacity: 0.55;
+}
+
+.postnote-entry svg {
+  display: block;
+  width: var(--postnote-icon-size, 1.25em);
+  height: var(--postnote-icon-size, 1.25em);
+  fill: currentColor;
+}
+
+/* Toasts ------------------------------------------------------------------ */
+
+.postnote-toasts {
+  position: fixed;
+  right: 20px;
+  bottom: 20px;
+  z-index: 2147482900;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-width: 360px;
+}
+
+.postnote-toast {
+  padding: 10px 14px;
+  border-radius: 12px;
+  background: rgb(15, 20, 25);
+  color: rgb(255, 255, 255);
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.32);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC",
+    "Microsoft YaHei", sans-serif;
+  font-size: 14px;
+  line-height: 1.5;
+  cursor: pointer;
+}
+
+.postnote-toast.is-error {
+  background: rgb(244, 33, 46);
+}
+
+/* Offscreen capture stage ------------------------------------------------- */
+
+.postnote-stage {
+  position: absolute;
+  top: 0;
+  left: -100000px;
+  overflow: visible;
+}
+
+/* Card --------------------------------------------------------------------
+ * The PNG is a sheet: a quiet tinted margin around one white note. Each post
+ * is a two-column grid — an avatar rail that carries the thread line, and the
+ * content column. Time lives at the foot of each post the way X prints it on a
+ * detail page.
+ */
+
+.postnote-sheet {
+  --ink: #0f1419;
+  --ink-2: #536471;
+  --hair: #e7ecf0;
+  --tint: #f5f8fa;
+  --link: #1d9bf0;
+  box-sizing: border-box;
+  width: 706px;
+  padding: 28px;
+  background: linear-gradient(155deg, #e6edf4 0%, #eef2f6 45%, #f6f4f1 100%);
+  font-family: "TwitterChirp", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+    "Helvetica Neue", Arial, "PingFang SC", "Microsoft YaHei", sans-serif;
+  color: var(--ink);
+}
+
+.postnote-note {
+  background: #fff;
+  border-radius: 22px;
+  box-shadow: 0 1px 0 rgba(15, 20, 25, 0.04), 0 10px 30px rgba(32, 54, 82, 0.10);
+  overflow: hidden;
+}
+
+.postnote-post {
+  display: grid;
+  grid-template-columns: 48px minmax(0, 1fr);
+  column-gap: 14px;
+  padding: 24px 28px 0;
+  box-sizing: border-box;
+}
+
+.postnote-post.is-end {
+  padding-bottom: 22px;
+}
+
+/* The stub above a continuing post's avatar joins it to the line above. */
+.postnote-post.is-cont .postnote-rail::before {
+  content: "";
+  width: 2px;
+  height: 24px;
+  margin-top: -24px;
+  background: #cfd9de;
+}
+
+.postnote-rail {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.postnote-line {
+  flex: 1;
+  width: 2px;
+  margin-top: 6px;
+  border-radius: 1px;
+  background: #cfd9de;
+}
+
+.postnote-post.is-end .postnote-line {
+  display: none;
+}
+
+.postnote-content {
+  min-width: 0;
+  padding-bottom: 22px;
+}
+
+.postnote-post.is-end .postnote-content {
+  padding-bottom: 0;
+}
+
+.postnote-who {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  margin-bottom: 10px;
+}
+
+.postnote-name {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 17px;
+  font-weight: 700;
+  line-height: 1.3;
+}
+
+.postnote-verified {
+  display: inline-flex;
+  flex: 0 0 auto;
+}
+
+.postnote-verified svg {
+  display: block;
+  width: 18px;
+  height: 18px;
+  fill: var(--link);
+}
+
+.postnote-verified.is-business svg {
+  fill: url(#postnote-gold);
+}
+
+.postnote-verified.is-government svg {
+  fill: #829aab;
+}
+
+.postnote-org {
+  flex: 0 0 auto;
+  width: 17px;
+  height: 17px;
+  border-radius: 4px;
+  box-shadow: 0 0 0 1px #e7ecf0;
+  object-fit: cover;
+}
+
+.postnote-handle {
+  font-size: 15px;
+  color: var(--ink-2);
+  line-height: 1.3;
+}
+
+.postnote-avatar,
+.postnote-avatar-placeholder {
+  flex: 0 0 48px;
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  object-fit: cover;
+  background: rgb(239, 243, 244);
+}
+
+.postnote-avatar.is-square,
+.postnote-avatar-placeholder.is-square {
+  border-radius: 10px;
+}
+
+.postnote-avatar-placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: rgb(83, 100, 113);
+  font-size: 20px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.postnote-text {
+  font-size: 20px;
+  line-height: 1.6;
+  letter-spacing: 0.005em;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.postnote-text + * {
+  margin-top: 14px;
+}
+
+.postnote-link {
+  color: var(--link);
+  text-decoration: none;
+}
+
+.postnote-emoji {
+  display: inline-block;
+  width: 1.2em;
+  height: 1.2em;
+  margin: 0 0.1em;
+  vertical-align: -0.2em;
+  object-fit: contain;
+}
+
+.postnote-media {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.postnote-clip {
+  position: relative;
+  border-radius: 16px;
+  overflow: hidden;
+  max-width: 100%;
+  box-shadow: inset 0 0 0 1px rgba(15, 20, 25, 0.08);
+}
+
+.postnote-clip-image {
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  object-fit: cover;
+}
+
+.postnote-clip.is-video {
+  aspect-ratio: 16 / 9;
+  background: #f3efe6;
+}
+
+.postnote-clip.is-video .postnote-clip-image {
+  height: 100%;
+}
+
+.postnote-play {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 58px;
+  height: 58px;
+  margin: -29px 0 0 -29px;
+  border-radius: 50%;
+  background: rgba(29, 155, 240, 0.92);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.25);
+}
+
+.postnote-play::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  margin: -12px 0 0 -8px;
+  border-style: solid;
+  border-width: 12px 0 12px 20px;
+  border-color: transparent transparent transparent #fff;
+}
+
+.postnote-play.is-small {
+  width: 30px;
+  height: 30px;
+  margin: -15px 0 0 -15px;
+  background: rgba(15, 20, 25, 0.7);
+  border: 2px solid #fff;
+  box-shadow: none;
+}
+
+.postnote-play.is-small::after {
+  margin: -6px 0 0 -4px;
+  border-width: 6px 0 6px 10px;
+}
+
+.postnote-vbadge {
+  position: absolute;
+  left: 12px;
+  bottom: 12px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 12px 3px 10px;
+  border-radius: 999px;
+  background: rgba(15, 20, 25, 0.72);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 20px;
+  backdrop-filter: blur(4px);
+}
+
+.postnote-vbadge::before {
+  content: "";
+  border-style: solid;
+  border-width: 5px 0 5px 8px;
+  border-color: transparent transparent transparent #fff;
+}
+
+.postnote-vbadge.is-small {
+  left: 6px;
+  bottom: 6px;
+  font-size: 10px;
+  padding: 1px 6px 1px 5px;
+  line-height: 14px;
+  gap: 3px;
+}
+
+.postnote-vbadge.is-small::before {
+  border-width: 3px 0 3px 5px;
+}
+
+/* A timestamp under the body, the way X prints it on a detail page. */
+.postnote-stamp {
+  margin-top: 14px;
+  font-size: 14px;
+  color: var(--ink-2);
+  font-variant-numeric: tabular-nums;
+}
+
+.postnote-stamp b {
+  color: var(--ink);
+  font-weight: 700;
+}
+
+.postnote-mx {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--hair);
+  color: var(--ink-2);
+  font-size: 14px;
+}
+
+.postnote-metric {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.postnote-metric svg {
+  flex: 0 0 auto;
+  width: 18px;
+  height: 18px;
+  fill: currentColor;
+}
+
+/* Quote ------------------------------------------------------------------ */
+
+.postnote-quote {
+  display: grid;
+  gap: 6px;
+  margin-top: 14px;
+  padding: 14px 16px;
+  border: 1px solid var(--hair);
+  border-radius: 16px;
+  background: var(--tint);
+}
+
+.postnote-quote.is-unreadable {
+  color: var(--ink-2);
+  font-size: 15px;
+}
+
+.postnote-qhead {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  font-size: 15px;
+  line-height: 1.3;
+}
+
+.postnote-qhead b {
+  font-weight: 700;
+}
+
+.postnote-qhead i {
+  font-style: normal;
+  color: var(--ink-2);
+}
+
+.postnote-qavatar,
+.postnote-qavatar.postnote-avatar-placeholder {
+  flex: 0 0 20px;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  object-fit: cover;
+  font-size: 11px;
+}
+
+.postnote-qavatar.is-square {
+  border-radius: 10px;
+}
+
+.postnote-qverified svg {
+  width: 16px;
+  height: 16px;
+}
+
+.postnote-qorg {
+  width: 15px;
+  height: 15px;
+  border-radius: 4px;
+}
+
+.postnote-qtext {
+  font-size: 16px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.postnote-qtext a {
+  color: var(--link);
+  text-decoration: none;
+}
+
+.postnote-qmedia {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+/* The second level inside a quote: compact, the way X draws it. */
+.postnote-quote.is-nested {
+  margin-top: 0;
+  background: #fff;
+  padding: 10px 12px;
+  gap: 8px;
+}
+
+.postnote-nest {
+  display: grid;
+  grid-template-columns: 96px minmax(0, 1fr);
+  gap: 12px;
+  align-items: center;
+}
+
+.postnote-nest.is-text-only {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.postnote-thumb {
+  position: relative;
+  aspect-ratio: 1;
+  border-radius: 10px;
+  overflow: hidden;
+  background: linear-gradient(160deg, #f4f4f2, #dcdcd8);
+  box-shadow: inset 0 0 0 1px rgba(15, 20, 25, 0.08);
+}
+
+.postnote-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+/* Footer ------------------------------------------------------------------ */
+
+.postnote-foot {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 28px;
+  background: var(--tint);
+  border-top: 1px solid var(--hair);
+  font-size: 12.5px;
+  color: var(--ink-2);
+}
+
+.postnote-src {
+  display: flex;
+  align-items: baseline;
+  flex: 0 1 auto;
+  min-width: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+.postnote-src-url {
+  flex: 0 1 auto;
+  min-width: 0;
+  /* SnapDOM freezes the measured box width into the clone, where the same
+     glyphs run a few pixels wider — an ellipsis zone would shave the tail of
+     an exactly-fitting address (and SnapDOM bakes "…" into the text when the
+     live element overflows). The address always fits the row, so let it paint
+     those pixels into the gap instead of clipping. */
+  overflow: visible;
+  white-space: nowrap;
+}
+
+.postnote-src-count {
+  flex: 0 0 auto;
+  /* A margin, not a leading space: the address may paint a few pixels past
+     its box in the SnapDOM clone, and it ate the space before "·". */
+  margin-left: 6px;
+  white-space: nowrap;
+}
+
+.postnote-mark {
+  flex: 0 0 auto;
+  letter-spacing: 0.08em;
+}
+
+.postnote-mark b {
+  color: var(--ink);
+  font-weight: 700;
+  letter-spacing: 0.12em;
+}
