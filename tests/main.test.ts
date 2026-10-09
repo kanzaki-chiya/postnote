@@ -49,6 +49,7 @@ function allToasts(): string[] {
  */
 let captureStarted = false;
 let releaseCapture: () => void = () => {};
+let capturedSheet: HTMLElement | undefined;
 
 function waitForCapture(): Promise<unknown> {
   return vi.waitFor(() => {
@@ -61,12 +62,15 @@ beforeEach(() => {
   uninstall();
   captureStarted = false;
   releaseCapture = () => {};
+  capturedSheet = undefined;
   vi.spyOn(exportModule, 'capturePng').mockImplementation(
-    () =>
-      new Promise<Blob>((_, reject) => {
+    (element) => {
+      capturedSheet = element;
+      return new Promise<Blob>((_, reject) => {
         captureStarted = true;
         releaseCapture = () => reject(new Error('canvas unavailable'));
-      }),
+      });
+    },
   );
   document.documentElement.lang = 'zh-CN';
   document.body.innerHTML = '';
@@ -397,15 +401,104 @@ describe('saving a post', () => {
   });
 
   it('explains a post it cannot read, and saves nothing', async () => {
-    document.body.append(buildPost({ id: '100', text: '带投票', poll: true }));
+    document.body.append(buildPost({ id: '100' }));
     const entry = await waitForEntry();
     entry.click();
 
     await vi.waitFor(() => {
-      expect(toastText()).toBe(EXTRACT_FAILURES['unsupported-poll'].zh);
+      expect(toastText()).toBe(EXTRACT_FAILURES['no-content'].zh);
     });
     expect(document.querySelector('.postnote-toast')?.getAttribute('role')).toBe('alert');
     expect(document.querySelector('.postnote-stage')).toBeNull();
+  });
+
+  it('draws the poll the page is showing, options while it still votes', async () => {
+    document.body.append(buildPost({ id: '100', text: '带投票', poll: 'options' }));
+    const entry = await waitForEntry();
+    entry.click();
+
+    await waitForCapture();
+    const poll = capturedSheet!.querySelector('.postnote-poll')!;
+    expect(
+      [...poll.querySelectorAll<HTMLElement>('.postnote-po')].map((item) => item.textContent),
+    ).toEqual(['选项甲', '选项乙']);
+    expect(poll.querySelectorAll('.postnote-pr')).toHaveLength(0);
+    expect(poll.querySelector('.postnote-poll-meta')?.textContent).toBe('9 票 · 剩下 2 天');
+    releaseCapture();
+  });
+
+  it('draws poll results with the page\'s own percentages and leaders', async () => {
+    document.body.append(buildPost({ id: '100', text: '带投票', poll: 'results' }));
+    const entry = await waitForEntry();
+    entry.click();
+
+    await waitForCapture();
+    const rows = [...capturedSheet!.querySelectorAll<HTMLElement>('.postnote-pr')];
+    expect(rows.map((row) => row.querySelector('.postnote-pr-pct')?.textContent)).toEqual([
+      '45.5%',
+      '9.1%',
+      '45.5%',
+    ]);
+    // Both leaders are bold on the page, so both lead on the sheet.
+    expect(rows.map((row) => row.classList.contains('is-win'))).toEqual([true, false, true]);
+    expect(
+      capturedSheet!.querySelector('.postnote-poll-meta')?.textContent,
+    ).toBe('11 票 · 最終結果');
+    releaseCapture();
+  });
+
+  it('lets the card data decide the poll of an ancestor that left the DOM', async () => {
+    // A reply whose parent carried a poll; only the reply is still rendered.
+    const parent: Record<string, unknown> = {
+      rest_id: '100',
+      legacy: {
+        id_str: '100',
+        full_text: 'parent',
+        created_at: '2026-06-01T10:00:00.000Z',
+      },
+      card: {
+        legacy: {
+          name: 'poll2choice_text_only',
+          binding_values: [
+            { key: 'choice1_label', value: { type: 'STRING', string_value: '赞成' } },
+            { key: 'choice1_count', value: { type: 'STRING', string_value: '7' } },
+            { key: 'choice2_label', value: { type: 'STRING', string_value: '反对' } },
+            { key: 'choice2_count', value: { type: 'STRING', string_value: '3' } },
+            { key: 'counts_are_final', value: { type: 'BOOLEAN', boolean_value: true } },
+          ],
+        },
+      },
+    };
+    const reply = {
+      rest_id: '200',
+      legacy: {
+        id_str: '200',
+        full_text: 'reply',
+        in_reply_to_status_id_str: '100',
+        created_at: '2026-06-01T11:00:00.000Z',
+      },
+    };
+    recordTweets(JSON.stringify({ data: { entries: [parent, reply] } }));
+    document.body.append(buildPost({ id: '200', text: 'reply' }));
+    const entry = await waitForEntry();
+    entry.click();
+
+    await waitForCapture();
+    const posts = capturedSheet!.querySelectorAll<HTMLElement>('.postnote-post');
+    expect(posts).toHaveLength(2);
+    const rows = [...posts[0].querySelectorAll<HTMLElement>('.postnote-pr')];
+    // The parent never rendered in this run: results come from the data alone.
+    expect(rows.map((row) => row.querySelector('.postnote-pr-label')?.textContent)).toEqual([
+      '赞成',
+      '反对',
+    ]);
+    expect(rows.map((row) => row.querySelector('.postnote-pr-pct')?.textContent)).toEqual([
+      '70%',
+      '30%',
+    ]);
+    expect(rows[0].classList.contains('is-win')).toBe(true);
+    expect(posts[0].querySelector('.postnote-poll-meta')?.textContent).toBe('10 票 · 最终结果');
+    releaseCapture();
   });
 
   it('stops when a resource cannot be loaded instead of saving a partial image', async () => {

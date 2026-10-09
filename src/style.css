@@ -113,6 +113,7 @@
   --hair: #e7ecf0;
   --tint: #f5f8fa;
   --link: #1d9bf0;
+  --edge: #cfd9de;
   box-sizing: border-box;
   width: 706px;
   padding: 28px;
@@ -384,6 +385,228 @@
   border-width: 3px 0 3px 5px;
 }
 
+/* Link card --------------------------------------------------------------
+ * The card sits between body/media and quote. The large kind is a 1.91:1
+ * image with the title pinned over its bottom; the small kind is a square
+ * thumbnail beside a three-line detail column.
+ */
+
+.postnote-lcard {
+  display: grid;
+  gap: 6px;
+}
+
+/* Body spacing comes from `.postnote-text + *`; media and card never share a
+   post on X, but if the data carries both the card still needs its gap. */
+.postnote-media + .postnote-lcard,
+.postnote-media + .postnote-scard,
+.postnote-media + .postnote-poll {
+  margin-top: 14px;
+}
+
+.postnote-lcard-box {
+  position: relative;
+  border: 1px solid var(--edge);
+  border-radius: 16px;
+  overflow: hidden;
+  aspect-ratio: 1.91 / 1;
+  background: #fff;
+}
+
+.postnote-lcard-image {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.postnote-lcard-title {
+  position: absolute;
+  left: 12px;
+  bottom: 12px;
+  max-width: calc(100% - 24px);
+  padding: 0 8px;
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.77);
+  color: #fff;
+  font-size: 13px;
+  line-height: 20px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.postnote-lcard-from {
+  font-size: 13px;
+  line-height: 16px;
+  color: var(--ink-2);
+}
+
+.postnote-scard {
+  display: flex;
+  border: 1px solid var(--edge);
+  border-radius: 16px;
+  overflow: hidden;
+  min-height: 130px;
+}
+
+.postnote-scard.no-media {
+  min-height: 0;
+}
+
+.postnote-scard-media {
+  position: relative;
+  flex: 0 0 130px;
+  border-right: 1px solid var(--edge);
+  overflow: hidden;
+}
+
+.postnote-scard-image {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.postnote-scard-detail {
+  min-width: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 2px;
+  padding: 12px 14px;
+  font-size: 15px;
+  line-height: 20px;
+}
+
+.postnote-scard-domain {
+  color: var(--ink-2);
+}
+
+.postnote-scard-title {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.postnote-scard-desc {
+  color: var(--ink-2);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  /* The clone does not always keep the clamp — the height limit does it then. */
+  max-height: 40px;
+  overflow: hidden;
+}
+
+.postnote-scard-play {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 40px;
+  height: 40px;
+  margin: -20px 0 0 -20px;
+  border-radius: 50%;
+  background: rgba(29, 155, 240, 0.92);
+  box-shadow: 0 3px 10px rgba(0, 0, 0, 0.25);
+}
+
+.postnote-scard-play::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  margin: -7px 0 0 -3px;
+  border-style: solid;
+  border-width: 7px 0 7px 12px;
+  border-color: transparent transparent transparent #fff;
+}
+
+/* Poll -------------------------------------------------------------------
+ * Option pills while the post still votes; result bars once results show.
+ */
+
+.postnote-poll {
+  display: grid;
+  gap: 4px;
+}
+
+.postnote-po {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 32px;
+  padding: 0 16px;
+  border: 1px solid var(--link);
+  border-radius: 9999px;
+  color: var(--link);
+  font-size: 15px;
+  font-weight: 700;
+  line-height: 20px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.postnote-pr {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  height: 32px;
+  /* The option label keeps its 12px from the left; the percentage's right edge
+     sits flush with the poll column's right edge, the way the page draws it. */
+  padding: 0 0 0 12px;
+  font-size: 15px;
+  line-height: 20px;
+}
+
+.postnote-pr-fill {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  min-width: 7px;
+  border-radius: 4px;
+  background: #cfd9de;
+}
+
+.postnote-pr-label {
+  position: relative;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.postnote-pr-pct {
+  position: relative;
+  flex: 0 0 auto;
+  font-variant-numeric: tabular-nums;
+}
+
+.postnote-pr.is-win .postnote-pr-fill {
+  background: rgba(29, 155, 240, 0.58);
+}
+
+.postnote-pr.is-win .postnote-pr-label,
+.postnote-pr.is-win .postnote-pr-pct {
+  font-weight: 700;
+}
+
+.postnote-poll-meta {
+  margin-top: 9px;
+  font-size: 15px;
+  line-height: 20px;
+  color: var(--ink-2);
+}
+
 /* A timestamp under the body, the way X prints it on a detail page. */
 .postnote-stamp {
   margin-top: 14px;
@@ -494,6 +717,15 @@
 .postnote-qtext a {
   color: var(--link);
   text-decoration: none;
+}
+
+/* The "Show this poll" line under a quote's text — the page's own link style. */
+.postnote-qpoll {
+  margin-top: 5px;
+  color: var(--link);
+  font-size: 15px;
+  font-weight: 400;
+  line-height: 20px;
 }
 
 .postnote-qmedia {

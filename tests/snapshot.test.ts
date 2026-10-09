@@ -146,11 +146,125 @@ describe('captured GraphQL snapshots', () => {
     expect(sheet.querySelector('.postnote-avatar.is-square')).not.toBeNull();
   });
 
-  it('refuses polls in the post and in either quote level', () => {
-    const poll = { ...threadNodes[0], card: { legacy: { name: 'poll2choice_text_only' } } };
-    expect(snapshot(poll).poll).toBe(true);
-    expect(snapshot({ ...nestedNodes[0], quoted_status_result: { result: poll } }).poll).toBe(true);
-    expect(snapshot({ ...nestedNodes[0], quoted_status_result: { result: { ...nestedNodes[1], nested_quoted_tweet_results: { result: poll } } } }).poll).toBe(true);
+  it('reads the post\'s summary_large_image card and hides its trailing t.co', () => {
+    const node = threadNodes.find((n) => n.card?.legacy?.name === 'summary_large_image')!;
+    const result = snapshot(node);
+    expect(result.data.card).toMatchObject({
+      layout: 'large',
+      player: false,
+      url: 'https://www.anthropic.com/claude-haiku-5-5',
+      domain: 'anthropic.com',
+      title: 'Introducing Claude Haiku 5.5',
+      description:
+        'Claude Haiku 5.5 is our fastest, most capable small model. Built for high-volume work like summarization, subagents, and browser use.',
+    });
+    expect(result.data.card?.image).toEqual({
+      src: 'https://pbs.twimg.com/card_img/1000000000000000180/c0eqb9id?format=jpg&name=800x419',
+      width: 800,
+      height: 419,
+    });
+    const text = bodyText(result.data.body);
+    expect(text).toContain('Read more:');
+    expect(text).not.toContain('t.co/');
+  });
+
+  it('keeps a card\'s t.co when it sits mid-text, and ignores unified_card', () => {
+    const base = threadNodes.find((n) => n.card?.legacy?.name === 'summary_large_image')!;
+    const node = structuredClone(base);
+    const tco = 'https://t.co/InzZXcEcRP';
+    const text = `前置 ${tco} 结尾 ${tco}`;
+    node.legacy.full_text = text;
+    node.legacy.display_text_range = [0, Array.from(text).length];
+    node.legacy.entities.urls = [
+      { url: tco, display_url: 'anthropic.com/a', expanded_url: 'https://a.example', indices: [3, 26] },
+      { url: tco, display_url: 'anthropic.com/b', expanded_url: 'https://b.example', indices: [30, 53] },
+    ];
+    const kept = bodyText(snapshot(node).data.body);
+    // The mid-text occurrence is body text; only the trailing one hid.
+    expect(kept).toContain('anthropic.com/a');
+    expect(kept).not.toContain('anthropic.com/b');
+
+    const unified = threadNodes.find((n) => n.card?.legacy?.name === 'unified_card')!;
+    const result = snapshot(unified);
+    expect(result.data.card).toBeNull();
+    expect(result.data.poll).toBeNull();
+  });
+
+  it('reads a poll card into choices, final state, and end time', () => {
+    const node: Node = {
+      ...threadNodes[0],
+      card: {
+        legacy: {
+          name: 'poll4choice_text_only',
+          url: 'card://1',
+          binding_values: [
+            { key: 'choice1_label', value: { type: 'STRING', string_value: '甲' } },
+            { key: 'choice1_count', value: { type: 'STRING', string_value: '7' } },
+            { key: 'choice2_label', value: { type: 'STRING', string_value: '乙' } },
+            { key: 'choice2_count', value: { type: 'STRING', string_value: '3' } },
+            { key: 'choice3_label', value: { type: 'STRING', string_value: '丙' } },
+            { key: 'counts_are_final', value: { type: 'BOOLEAN', boolean_value: true } },
+            { key: 'end_datetime_utc', value: { type: 'STRING', string_value: '2026-06-30T10:00:00Z' } },
+            { key: 'selected_choice', value: { type: 'STRING', string_value: '1' } },
+          ],
+        },
+      },
+    };
+    const result = snapshot(node);
+    expect(result.data.card).toBeNull();
+    expect(result.data.poll).toMatchObject({
+      final: true,
+      voted: true,
+      endsAt: '2026-06-30T10:00:00.000Z',
+    });
+    // A count the data never carried stays null — never drawn as a zero.
+    expect(result.data.poll?.choices).toEqual([
+      { label: '甲', count: 7 },
+      { label: '乙', count: 3 },
+      { label: '丙', count: null },
+    ]);
+  });
+
+  it('derives a poll end from last_updated + duration when no end is delivered', () => {
+    const node: Node = {
+      ...threadNodes[0],
+      card: {
+        legacy: {
+          name: 'poll2choice_text_only',
+          binding_values: [
+            { key: 'choice1_label', value: { type: 'STRING', string_value: '甲' } },
+            { key: 'choice2_label', value: { type: 'STRING', string_value: '乙' } },
+            { key: 'last_updated_datetime_utc', value: { type: 'STRING', string_value: '2026-06-29T10:00:00Z' } },
+            { key: 'duration_minutes', value: { type: 'STRING', string_value: '1440' } },
+          ],
+        },
+      },
+    };
+    const poll = snapshot(node).data.poll;
+    expect(poll).toMatchObject({ final: false, voted: false, endsAt: '2026-06-30T10:00:00.000Z' });
+  });
+
+  it('flags a poll on the quoted post itself and on the nested quote', () => {
+    const pollNode: Node = {
+      ...nestedNodes[2],
+      card: { legacy: { name: 'poll2choice_text_only', binding_values: [] } },
+    };
+    const direct = snapshot({
+      ...nestedNodes[0],
+      quoted_status_result: { result: pollNode },
+    });
+    expect(direct.data.quote).toMatchObject({ kind: 'readable', poll: true });
+
+    const wrapped = snapshot({
+      ...nestedNodes[0],
+      quoted_status_result: {
+        result: { ...nestedNodes[1], nested_quoted_tweet_results: { result: pollNode } },
+      },
+    });
+    const quote = wrapped.data.quote;
+    if (quote.kind !== 'readable') throw new Error('expected readable quote');
+    expect(quote.poll).toBe(false);
+    expect(quote.nested).toMatchObject({ kind: 'readable', poll: true });
   });
 
   it('does not silently drop unreadable quote media or a tombstone second quote', () => {

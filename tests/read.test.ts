@@ -143,6 +143,7 @@ describe('reading a post', () => {
       images: [
         { kind: 'photo', src: 'https://pbs.twimg.com/media/quoted?format=jpg&name=orig', alt: '' },
       ],
+      poll: false,
       nested: { kind: 'none' },
     });
   });
@@ -167,11 +168,117 @@ describe('reading a post', () => {
     expect(post.warnings).toContain('media-unknown');
   });
 
-  it('still refuses a poll instead of exporting around it', () => {
-    document.body.appendChild(buildPost({ id: '12', text: '带投票', poll: true }));
-    expect(readTweet(document.body.firstElementChild as HTMLElement)).toEqual({
-      ok: false,
-      failure: 'unsupported-poll',
+  it('reads a voting poll the way the page shows it', () => {
+    const post = read(buildPost({ id: '12', text: '带投票', poll: 'options' }));
+    expect(post.data.poll).toMatchObject({
+      final: false,
+      display: 'options',
+      meta: '9 票 · 剩下 2 天',
+    });
+    expect(post.data.poll?.choices).toEqual([
+      { label: '选项甲', count: null },
+      { label: '选项乙', count: null },
+    ]);
+  });
+
+  it('reads poll results with the page\'s percentages and leaders', () => {
+    const post = read(buildPost({ id: '12', text: '带投票', poll: 'results' }));
+    expect(post.data.poll?.display).toBe('results');
+    expect(post.data.poll?.meta).toBe('11 票 · 最終結果');
+    expect(post.data.poll?.choices).toEqual([
+      { label: '选项甲', count: null, pct: '45.5%', win: true },
+      { label: '选项乙', count: null, pct: '9.1%', win: false },
+      { label: '选项丙', count: null, pct: '45.5%', win: true },
+    ]);
+  });
+
+  it('reads the post\'s own large link card and leaves a quote\'s poll alone', () => {
+    const article = buildPost({
+      id: '15',
+      text: '正文',
+      linkCard: { layout: 'large', title: 'Hatoba 的 README', domain: 'github.com' },
+    });
+    const quote = attachQuote(article, { text: '引用' });
+    quote.insertAdjacentHTML(
+      'beforeend',
+      '<div data-testid="cardPoll"><div role="radiogroup">' +
+        '<div role="radio"><span>內部選項</span></div></div>' +
+        '<div><span>3 票</span><span> · </span><span>剩下 1 天</span></div></div>',
+    );
+    const post = read(article);
+    expect(post.data.card).toMatchObject({
+      layout: 'large',
+      player: false,
+      title: 'Hatoba 的 README',
+      domain: 'github.com',
+    });
+    expect(post.data.card?.image?.src).toContain('pbs.twimg.com/card_img/');
+    // The quote's poll belongs to the quote: marked on it, never on the post.
+    expect(post.data.poll).toBeNull();
+    expect(post.data.quote).toMatchObject({ kind: 'readable', poll: true });
+  });
+
+  it('marks a quote whose post carries a poll, either marker the page shows', () => {
+    const article = buildPost({ id: '20', text: '外层' });
+    const quote = attachQuote(article, { text: '引用正文' });
+    quote.insertAdjacentHTML('beforeend', '<a href="#"><span>顯示此投票</span></a>');
+    const post = read(article);
+    expect(post.data.quote).toMatchObject({ kind: 'readable', poll: true });
+
+    const article2 = buildPost({ id: '21', text: '外层' });
+    attachQuote(article2, { text: '普通引用' });
+    expect(read(article2).data.quote).toMatchObject({ kind: 'readable', poll: false });
+  });
+
+  it('marks the nested quote\'s poll as its own, not the outer one\'s', () => {
+    const article = buildPost({ id: '22', text: '外层' });
+    const quote = attachQuote(article, { text: '一层引用' });
+    const inner = document.createElement('div');
+    inner.setAttribute('role', 'link');
+    inner.tabIndex = 0;
+    inner.innerHTML =
+      '<div data-testid="User-Name"><div><a href="https://x.com/carol"><span>Carol</span></a></div></div>' +
+      '<div data-testid="tweetText"><span>二层引用</span></div>' +
+      '<div><span>顯示此投票</span></div>' +
+      '<a href="/carol/status/77"></a>';
+    quote.appendChild(inner);
+    const post = read(article);
+    const outer = post.data.quote;
+    if (outer.kind !== 'readable') throw new Error('expected readable quote');
+    expect(outer.poll).toBe(false);
+    expect(outer.nested).toMatchObject({ kind: 'readable', poll: true });
+  });
+
+  it('reads a player card as a small card with a play badge', () => {
+    const post = read(
+      buildPost({
+        id: '16',
+        linkCard: { layout: 'small', title: 'YouTube', domain: 'youtube.com', player: true },
+      }),
+    );
+    expect(post.data.card).toMatchObject({ layout: 'small', player: true, domain: 'youtube.com' });
+    expect(post.data.body).toEqual([]);
+  });
+
+  it('keeps the link visible when the card itself could not be read', () => {
+    const post = read(
+      buildPost({
+        id: '17',
+        text: 'Hatoba',
+        linkCard: {
+          layout: 'small',
+          title: '',
+          description: '',
+          domain: 'x.com',
+          href: 'https://t.co/card',
+        },
+      }),
+    );
+    expect(post.data.card).toBeNull();
+    expect(post.data.body.at(-1)).toEqual({
+      kind: 'link',
+      text: 'x.com',
+      href: 'https://t.co/card',
     });
   });
 

@@ -16,6 +16,7 @@ import type { ExportFailure } from './messages';
 import {
   ROLE_ATTRIBUTE,
   applyAvatarPlaceholder,
+  applyCardMediaFallback,
   applyEmojiFallback,
   applyOrgFallback,
   type ResourceRole,
@@ -214,6 +215,8 @@ function isAllowedHost(value: string): boolean {
 
 function canDegrade(role: ResourceRole, image: HTMLImageElement): boolean {
   if (role === 'emoji') return Boolean(image.dataset.unicode);
+  // A card image that never arrives becomes the card's text-only layout.
+  if (role === 'card-media') return true;
   return role === 'avatar' || role === 'quote-avatar' || role === 'org';
 }
 
@@ -276,6 +279,7 @@ export async function prepareCard(
     if (canDegrade(role, image)) {
       if (role === 'emoji') applyEmojiFallback(image);
       else if (role === 'org') applyOrgFallback(image);
+      else if (role === 'card-media') applyCardMediaFallback(image);
       else applyAvatarPlaceholder(image, image.dataset.ownerName ?? '');
       report.degraded.push(entry);
       return;

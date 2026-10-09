@@ -20,11 +20,30 @@ export type PostFixture = {
   video?: boolean;
   /** The poster URL a video player exposes; defaults to a real-looking one. */
   videoPoster?: string | null;
-  poll?: boolean;
+  /**
+   * A poll card the way X renders it: 'options' while it still votes (a
+   * radiogroup), 'results' once it shows bars. `true` means 'options'.
+   */
+  poll?: boolean | 'options' | 'results';
+  /** A link preview card under the body, as X's card.wrapper draws it. */
+  linkCard?: LinkCardFixture;
   /** Text X hides behind its own "show more" until that control is clicked. */
   showMore?: string;
   /** A control that takes itself away without ever showing the rest. */
   showMoreStuck?: boolean;
+};
+
+export type LinkCardFixture = {
+  layout?: 'large' | 'small';
+  title?: string;
+  domain?: string;
+  description?: string;
+  /** Thumbnail src; `null` draws the card without an image. */
+  image?: string | null;
+  /** A play badge over the thumbnail, like a player card's. */
+  player?: boolean;
+  /** The address the card's anchor carries. */
+  href?: string;
 };
 
 function el<K extends keyof HTMLElementTagNameMap>(
@@ -132,7 +151,85 @@ export function buildPost(options: PostFixture = {}): HTMLElement {
   if (options.poll) {
     const poll = el('div');
     poll.dataset.testid = 'cardPoll';
+    const mode = options.poll === true ? 'options' : options.poll;
+    if (mode === 'options') {
+      const group = el('div');
+      group.setAttribute('role', 'radiogroup');
+      group.setAttribute('aria-label', '投票選項');
+      ['选项甲', '选项乙'].forEach((label) => {
+        const radio = el('div');
+        radio.setAttribute('role', 'radio');
+        radio.appendChild(el('span', label));
+        group.appendChild(radio);
+      });
+      poll.appendChild(group);
+    } else {
+      // Result rows: the leaders are the rows the page bolds.
+      const rows: [string, string, boolean][] = [
+        ['选项甲', '45.5%', true],
+        ['选项乙', '9.1%', false],
+        ['选项丙', '45.5%', true],
+      ];
+      for (const [label, pct, win] of rows) {
+        const row = el('div');
+        const labelSpan = el('span', label);
+        const pctSpan = el('span', pct);
+        if (win) {
+          labelSpan.style.fontWeight = '700';
+          pctSpan.style.fontWeight = '700';
+        }
+        row.append(labelSpan, pctSpan);
+        poll.appendChild(row);
+      }
+    }
+    const meta = el('div');
+    meta.appendChild(el('span', mode === 'options' ? '9 票' : '11 票'));
+    meta.appendChild(el('span', '·'));
+    meta.appendChild(el('span', mode === 'options' ? '剩下 2 天' : '最終結果'));
+    poll.appendChild(meta);
     article.appendChild(poll);
+  }
+
+  if (options.linkCard) {
+    const spec = options.linkCard;
+    const wrapper = el('div');
+    wrapper.dataset.testid = 'card.wrapper';
+    const anchor = el('a');
+    anchor.href = spec.href ?? 'https://t.co/card';
+    if ((spec.layout ?? 'small') === 'large') {
+      const media = el('div');
+      media.dataset.testid = 'card.layoutLarge.media';
+      if (spec.image !== null) {
+        const image = el('img');
+        image.src = spec.image ?? 'https://pbs.twimg.com/card_img/1/a?format=jpg&name=800x419';
+        media.appendChild(image);
+      }
+      media.appendChild(el('div', spec.title ?? 'Card title'));
+      anchor.appendChild(media);
+      const from = el('div');
+      from.appendChild(el('span', `來自 ${spec.domain ?? 'example.com'}`));
+      anchor.appendChild(from);
+    } else {
+      const media = el('div');
+      media.dataset.testid = 'card.layoutSmall.media';
+      if (spec.image !== null) {
+        const image = el('img');
+        image.src = spec.image ?? 'https://pbs.twimg.com/card_img/1/a?format=jpg&name=280x150';
+        media.appendChild(image);
+      }
+      if (spec.player) media.appendChild(el('div'));
+      anchor.appendChild(media);
+      const detail = el('div');
+      detail.dataset.testid = 'card.layoutSmall.detail';
+      [
+        spec.domain ?? 'example.com',
+        spec.title ?? 'Card title',
+        spec.description ?? 'The summary under the title',
+      ].forEach((text) => detail.appendChild(el('div', text)));
+      anchor.appendChild(detail);
+    }
+    wrapper.appendChild(anchor);
+    article.appendChild(wrapper);
   }
 
   const group = el('div');

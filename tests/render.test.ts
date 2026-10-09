@@ -1,9 +1,19 @@
 // @vitest-environment jsdom
 
 import { beforeEach, describe, expect, it } from 'vitest';
-import { applyAvatarPlaceholder, applyEmojiFallback, renderCard } from '../src/render';
+import {
+  applyAvatarPlaceholder,
+  applyCardMediaFallback,
+  applyEmojiFallback,
+  formatPollPercent,
+  renderCard,
+} from '../src/render';
 import { ROLE_ATTRIBUTE } from '../src/render';
 import type { TweetData } from '../src/tweet';
+// @ts-expect-error vitest runs on node; the project types stay DOM-only
+import { readFileSync } from 'node:fs';
+// @ts-expect-error vitest runs on node; the project types stay DOM-only
+import { resolve } from 'node:path';
 import { buildPost } from './fixtures/build-page';
 import { readTweet } from '../src/x-page';
 
@@ -98,6 +108,60 @@ describe('rendering a card', () => {
     expect(quote?.textContent).not.toBe('');
   });
 
+  it('draws the poll reveal line inside a quote and inside its nested quote', () => {
+    const quote: TweetData['quote'] = {
+      kind: 'readable',
+      id: '9',
+      url: null,
+      author: { name: 'Q', handle: '@q', avatarUrl: null },
+      time: { absolute: null, visible: null },
+      body: [{ kind: 'text', text: '引用正文' }],
+      images: [],
+      poll: true,
+      nested: { kind: 'none' },
+    };
+    const card = renderCard(sample({ quote }), OPTIONS);
+    const line = card.querySelector('.postnote-quote:not(.is-nested) .postnote-qpoll');
+    expect(line?.textContent).toBe('显示此投票');
+    expect(card.querySelectorAll('.postnote-qpoll')).toHaveLength(1);
+    // The quote never expands the poll itself.
+    expect(card.querySelector('.postnote-poll')).toBeNull();
+
+    const nestedQuote: TweetData['quote'] = {
+      ...quote,
+      poll: false,
+      nested: { ...quote, poll: true, nested: { kind: 'none' } },
+    };
+    const card2 = renderCard(sample({ quote: nestedQuote }), OPTIONS);
+    const nested = card2.querySelector('.postnote-quote.is-nested');
+    expect(nested?.querySelector('.postnote-qpoll')?.textContent).toBe('显示此投票');
+    expect(card2.querySelectorAll('.postnote-qpoll')).toHaveLength(1);
+  });
+
+  it('writes the reveal line in the page\'s own language', () => {
+    const quote: TweetData['quote'] = {
+      kind: 'readable',
+      id: '9',
+      url: null,
+      author: { name: 'Q', handle: '@q', avatarUrl: null },
+      time: { absolute: null, visible: null },
+      body: [{ kind: 'text', text: '引用正文' }],
+      images: [],
+      poll: true,
+      nested: { kind: 'none' },
+    };
+    expect(
+      renderCard(sample({ quote }), { language: 'zh', traditional: true }).querySelector(
+        '.postnote-qpoll',
+      )?.textContent,
+    ).toBe('顯示此投票');
+    expect(
+      renderCard(sample({ quote }), { language: 'en', traditional: false }).querySelector(
+        '.postnote-qpoll',
+      )?.textContent,
+    ).toBe('Show this poll');
+  });
+
   it('falls back to the Unicode an emoji image stood for', () => {
     const card = renderCard(
       sample({
@@ -121,5 +185,214 @@ describe('rendering a card', () => {
     applyAvatarPlaceholder(avatar as HTMLImageElement, 'Alice');
     const placeholder = card.querySelector('.postnote-avatar-placeholder');
     expect(placeholder?.textContent).toBe('A');
+  });
+
+  it('draws a large card with the title over the image and the domain below', () => {
+    const card = renderCard(
+      sample({
+        card: {
+          layout: 'large',
+          player: false,
+          url: 'https://www.anthropic.com/claude-haiku-5-5',
+          domain: 'anthropic.com',
+          title: 'Introducing Claude Haiku 5.5',
+          description: 'Claude Haiku 5.5 is our fastest.',
+          image: {
+            src: 'https://pbs.twimg.com/card_img/1/a?format=jpg&name=800x419',
+            width: 800,
+            height: 419,
+          },
+        },
+      }),
+      OPTIONS,
+    );
+    const large = card.querySelector('.postnote-lcard');
+    expect(large).not.toBeNull();
+    expect(large?.querySelector('img')?.dataset.postnoteSrc).toContain('card_img/1/a');
+    expect(large?.querySelector('.postnote-lcard-title')?.textContent).toBe(
+      'Introducing Claude Haiku 5.5',
+    );
+    expect(large?.querySelector('.postnote-lcard-from')?.textContent).toBe('来自 anthropic.com');
+  });
+
+  it('draws a small card with a play badge, and a text-only card without an image', () => {
+    const player = renderCard(
+      sample({
+        card: {
+          layout: 'small',
+          player: true,
+          url: 'https://youtube.com/watch?v=1',
+          domain: 'youtube.com',
+          title: 'Video',
+          description: 'desc',
+          image: { src: 'https://pbs.twimg.com/card_img/1/b?format=jpg&name=280x150' },
+        },
+      }),
+      OPTIONS,
+    );
+    expect(player.querySelector('.postnote-scard-play')).not.toBeNull();
+    expect(player.querySelector('.postnote-scard-domain')?.textContent).toBe('youtube.com');
+
+    const bare = renderCard(
+      sample({
+        card: {
+          layout: 'large',
+          player: false,
+          url: 'https://x.com',
+          domain: 'x.com',
+          title: 'No image',
+          description: '',
+          image: null,
+        },
+      }),
+      OPTIONS,
+    );
+    const small = bare.querySelector('.postnote-scard')!;
+    expect(small.classList.contains('no-media')).toBe(true);
+    expect(small.querySelector('img')).toBeNull();
+    expect(small.querySelector('.postnote-scard-title')?.textContent).toBe('No image');
+  });
+
+  it('swaps a failed large card image for the text layout instead of vanishing', () => {
+    const card = renderCard(
+      sample({
+        card: {
+          layout: 'large',
+          player: false,
+          url: 'https://x.com',
+          domain: 'x.com',
+          title: 'Fallback title',
+          description: 'Fallback desc',
+          image: { src: 'https://pbs.twimg.com/card_img/1/c?format=jpg&name=800x419' },
+        },
+      }),
+      OPTIONS,
+    );
+    const image = card.querySelector<HTMLImageElement>(`img[${ROLE_ATTRIBUTE}="card-media"]`)!;
+    applyCardMediaFallback(image);
+    expect(card.querySelector('.postnote-lcard')).toBeNull();
+    const small = card.querySelector('.postnote-scard')!;
+    expect(small.classList.contains('no-media')).toBe(true);
+    expect(small.querySelector('.postnote-scard-title')?.textContent).toBe('Fallback title');
+    expect(small.querySelector('.postnote-scard-desc')?.textContent).toBe('Fallback desc');
+  });
+
+  it('formats a poll percentage the way X writes it', () => {
+    expect(formatPollPercent(3, 10)).toBe('30%');
+    expect(formatPollPercent(455, 1000)).toBe('45.5%');
+    expect(formatPollPercent(1, 3)).toBe('33.3%');
+    expect(formatPollPercent(0, 0)).toBe('0%');
+  });
+
+  it('draws voting options while the poll is open and bars once results show', () => {
+    const voting = renderCard(
+      sample({
+        poll: {
+          choices: [
+            { label: '甲', count: 7 },
+            { label: '乙', count: 3 },
+          ],
+          final: false,
+          voted: false,
+          endsAt: null,
+          display: 'options',
+          meta: '10 票 · 剩下 2 天',
+        },
+      }),
+      OPTIONS,
+    );
+    expect([...voting.querySelectorAll('.postnote-po')].map((item) => item.textContent)).toEqual([
+      '甲',
+      '乙',
+    ]);
+    expect(voting.querySelector('.postnote-poll-meta')?.textContent).toBe('10 票 · 剩下 2 天');
+
+    const closed = renderCard(
+      sample({
+        poll: {
+          choices: [
+            { label: '甲', count: 7 },
+            { label: '乙', count: 3 },
+            { label: '丙', count: 7 },
+          ],
+          final: true,
+          endsAt: '2026-06-30T10:00:00.000Z',
+          display: 'results',
+          meta: '17 票 · 最终结果',
+        },
+      }),
+      OPTIONS,
+    );
+    const rows = [...closed.querySelectorAll<HTMLElement>('.postnote-pr')];
+    expect(rows.map((row) => row.querySelector('.postnote-pr-pct')?.textContent)).toEqual([
+      '41.2%',
+      '17.6%',
+      '41.2%',
+    ]);
+    // Tied leaders are all marked, like the bold rows on the page.
+    expect(rows.map((row) => row.classList.contains('is-win'))).toEqual([true, false, true]);
+    expect(closed.querySelector('.postnote-poll-meta')?.textContent).toBe('17 票 · 最终结果');
+  });
+
+  it('keeps the page\'s own percentages when they are the source of truth', () => {
+    const card = renderCard(
+      sample({
+        poll: {
+          choices: [
+            { label: '甲', count: null, pct: '45.5%', win: true },
+            { label: '乙', count: null, pct: '9.1%', win: false },
+          ],
+          final: false,
+          endsAt: null,
+          display: 'results',
+          meta: '11 票 · 最終結果',
+        },
+      }),
+      OPTIONS,
+    );
+    const rows = [...card.querySelectorAll<HTMLElement>('.postnote-pr')];
+    expect(rows.map((row) => row.querySelector('.postnote-pr-pct')?.textContent)).toEqual([
+      '45.5%',
+      '9.1%',
+    ]);
+    expect(rows.map((row) => row.classList.contains('is-win'))).toEqual([true, false]);
+    expect(rows[0].querySelector<HTMLElement>('.postnote-pr-fill')?.style.width).toBe('45.5%');
+  });
+
+  it('does not draw a poll result bar when no count or percentage exists', () => {
+    const card = renderCard(
+      sample({
+        poll: {
+          choices: [
+            { label: '甲', count: null },
+            { label: '乙', count: null },
+          ],
+          final: true,
+          endsAt: null,
+          display: 'results',
+        },
+      }),
+      OPTIONS,
+    );
+    // Results cannot be drawn without real numbers: options stand in their
+    // place rather than invented bars.
+    expect(card.querySelectorAll('.postnote-pr')).toHaveLength(0);
+    expect(card.querySelectorAll('.postnote-po')).toHaveLength(2);
+    expect(card.querySelector('.postnote-poll-meta')).toBeNull();
+  });
+
+  it('keeps the percentage flush with the poll edge and styles the reveal line', () => {
+    // @ts-expect-error node globals are available under vitest
+    const css = readFileSync(resolve(process.cwd(), 'src/style.css'), 'utf8');
+    const rule = (name: string) =>
+      css.match(new RegExp(`${name}\\s*\\{([^}]*)\\}`))?.[1] ?? '';
+    expect(rule('\\.postnote-pr')).toContain('padding: 0 0 0 12px');
+    const qpoll = rule('\\.postnote-qpoll');
+    expect(qpoll).toContain('margin-top: 5px');
+    expect(qpoll).toContain('font-size: 15px');
+    expect(qpoll).toContain('font-weight: 400');
+    expect(qpoll).toContain('line-height: 20px');
+    expect(qpoll).toContain('color: var(--link)');
+    expect(css).toContain('--link: #1d9bf0');
   });
 });

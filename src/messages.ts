@@ -11,6 +11,7 @@ import type {
   ExtractFailure,
   ExtractWarning,
   PageLanguage,
+  Poll,
 } from './tweet';
 
 /** Look up with the page language: `ENTRY[language]`. */
@@ -34,10 +35,6 @@ export const EXTRACT_FAILURES: Record<ExtractFailure, Entry> = {
   'unsupported-media': {
     zh: '这条推文包含现在无法导出的内容，已停止。',
     en: 'This post contains content that cannot be exported yet, so nothing was saved.',
-  },
-  'unsupported-poll': {
-    zh: '这条推文包含投票，PostNote 还不能导出投票，已停止。',
-    en: 'This post contains a poll, which PostNote cannot export yet, so nothing was saved.',
   },
   'read-error': {
     zh: '读取这条推文时出错，请刷新页面后重试。',
@@ -120,6 +117,55 @@ export function mediaBadge(
 export function postsSuffix(language: PageLanguage, count: number, traditional = false): string {
   if (language === 'en') return `${count} posts`;
   return `共 ${count} ${traditional ? '條' : '条'}`;
+}
+
+/** The "From domain" line under a large link card. */
+export function cardFromLabel(language: PageLanguage, traditional = false): string {
+  return language === 'en' ? 'From' : traditional ? '來自' : '来自';
+}
+
+/** The link X draws inside a quote box in place of the quoted post's poll. */
+export function pollRevealLabel(language: PageLanguage, traditional = false): string {
+  return language === 'en' ? 'Show this poll' : traditional ? '顯示此投票' : '显示此投票';
+}
+
+const POLL_UNITS = {
+  day: { zh: '天', zht: '天', en: 'day' },
+  hour: { zh: '小时', zht: '小時', en: 'hour' },
+  minute: { zh: '分钟', zht: '分鐘', en: 'minute' },
+} as const;
+
+/**
+ * The grey line under a poll: 「N 票 · 剩余 2 天」/「N votes · 2 days left」.
+ *
+ * Returns '' when the vote total was never exposed — the line is omitted then,
+ * rather than printed with an invented count.
+ */
+export function pollMeta(poll: Poll, language: PageLanguage, traditional = false): string {
+  if (poll.choices.every((choice) => choice.count === null)) return '';
+  const total = poll.choices.reduce((sum, choice) => sum + (choice.count ?? 0), 0);
+  const grouped = total.toLocaleString('en-US');
+  const votes =
+    language === 'en' ? `${grouped} ${total === 1 ? 'vote' : 'votes'}` : `${grouped} 票`;
+  let tail = '';
+  if (poll.final) {
+    tail = language === 'en' ? 'Final results' : traditional ? '最終結果' : '最终结果';
+  } else if (poll.endsAt) {
+    const ms = new Date(poll.endsAt).getTime() - Date.now();
+    if (Number.isFinite(ms) && ms > 0) {
+      const [amount, unit] =
+        ms >= 86_400_000
+          ? ([Math.floor(ms / 86_400_000), 'day'] as const)
+          : ms >= 3_600_000
+            ? ([Math.floor(ms / 3_600_000), 'hour'] as const)
+            : ([Math.max(1, Math.floor(ms / 60_000)), 'minute'] as const);
+      tail =
+        language === 'en'
+          ? `${amount} ${POLL_UNITS[unit].en}${amount === 1 ? '' : 's'} left`
+          : `${traditional ? '剩下' : '剩余'} ${amount} ${traditional ? POLL_UNITS[unit].zht : POLL_UNITS[unit].zh}`;
+    }
+  }
+  return tail ? `${votes} · ${tail}` : votes;
 }
 
 export type UiKey = keyof typeof UI;

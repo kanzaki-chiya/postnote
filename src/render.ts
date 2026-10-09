@@ -10,8 +10,17 @@
  *   drawn, so an unknown count never appears as a zero.
  */
 
-import type { Author, BodySegment, Media, Metrics, PageLanguage, TweetData } from './tweet';
-import { UI, mediaBadge, metricLabel, postsSuffix } from './messages';
+import type {
+  Author,
+  BodySegment,
+  LinkCard,
+  Media,
+  Metrics,
+  PageLanguage,
+  Poll,
+  TweetData,
+} from './tweet';
+import { UI, cardFromLabel, mediaBadge, metricLabel, pollMeta, pollRevealLabel, postsSuffix } from './messages';
 
 export const ROLE_ATTRIBUTE = 'data-postnote-role';
 
@@ -21,6 +30,7 @@ export type ResourceRole =
   | 'media'
   | 'quote-avatar'
   | 'quote-media'
+  | 'card-media'
   | 'org'
   | 'emoji';
 
@@ -283,6 +293,189 @@ function renderMediaStack(
   return stack;
 }
 
+/** One text row of the small card's right-hand column; empty ones are skipped. */
+function cardDetailRow(className: string, text: string): HTMLSpanElement | null {
+  if (!text) return null;
+  const span = document.createElement('span');
+  span.className = className;
+  span.textContent = text;
+  return span;
+}
+
+/** The detail column every small card shares: domain, title, summary. */
+function cardDetail(card: LinkCard): HTMLElement {
+  const detail = document.createElement('div');
+  detail.className = 'postnote-scard-detail';
+  for (const row of [
+    cardDetailRow('postnote-scard-domain', card.domain),
+    cardDetailRow('postnote-scard-title', card.title),
+    cardDetailRow('postnote-scard-desc', card.description),
+  ]) {
+    if (row) detail.appendChild(row);
+  }
+  return detail;
+}
+
+/**
+ * The link preview under the body, between media and quote.
+ *
+ * The large kind is a wide image with the title pinned over its bottom and a
+ * "来自 domain" line under it; every other shape — including a large card
+ * whose image is missing — is the small row layout.
+ */
+function renderLinkCard(card: LinkCard, options: CardOptions): HTMLElement {
+  if (card.layout === 'large' && card.image) {
+    const box = document.createElement('div');
+    box.className = 'postnote-lcard';
+    // The fields a fallback rebuild needs when the image never arrives.
+    box.dataset.domain = card.domain;
+    box.dataset.title = card.title;
+    box.dataset.desc = card.description;
+    const media = document.createElement('div');
+    media.className = 'postnote-lcard-box';
+    const image = document.createElement('img');
+    image.className = 'postnote-lcard-image';
+    image.setAttribute(ROLE_ATTRIBUTE, 'card-media');
+    image.alt = '';
+    image.dataset.postnoteSrc = card.image.src;
+    image.src = card.image.src;
+    media.appendChild(image);
+    const chip = document.createElement('span');
+    chip.className = 'postnote-lcard-title';
+    chip.textContent = card.title;
+    media.appendChild(chip);
+    box.appendChild(media);
+    if (card.domain) {
+      const from = document.createElement('div');
+      from.className = 'postnote-lcard-from';
+      from.textContent = `${cardFromLabel(options.language, options.traditional)} ${card.domain}`;
+      box.appendChild(from);
+    }
+    return box;
+  }
+
+  const box = document.createElement('div');
+  box.className = 'postnote-scard';
+  if (card.image) {
+    const media = document.createElement('div');
+    media.className = 'postnote-scard-media';
+    const image = document.createElement('img');
+    image.className = 'postnote-scard-image';
+    image.setAttribute(ROLE_ATTRIBUTE, 'card-media');
+    image.alt = '';
+    image.dataset.postnoteSrc = card.image.src;
+    image.src = card.image.src;
+    media.appendChild(image);
+    if (card.player) {
+      const play = document.createElement('span');
+      play.className = 'postnote-scard-play';
+      media.appendChild(play);
+    }
+    box.appendChild(media);
+  } else {
+    box.classList.add('no-media');
+  }
+  box.appendChild(cardDetail(card));
+  return box;
+}
+
+/**
+ * A card image that cannot be used degrades instead of stopping the export:
+ * the large card becomes the text-only small layout, the small card loses its
+ * thumbnail column.
+ */
+export function applyCardMediaFallback(image: HTMLImageElement): void {
+  const large = image.closest<HTMLElement>('.postnote-lcard');
+  if (large) {
+    const small = document.createElement('div');
+    small.className = 'postnote-scard no-media';
+    small.appendChild(
+      cardDetail({
+        layout: 'small',
+        player: false,
+        url: '',
+        domain: large.dataset.domain ?? '',
+        title: large.dataset.title ?? '',
+        description: large.dataset.desc ?? '',
+        image: null,
+      }),
+    );
+    large.replaceWith(small);
+    return;
+  }
+  const media = image.closest<HTMLElement>('.postnote-scard-media');
+  media?.closest('.postnote-scard')?.classList.add('no-media');
+  media?.remove();
+}
+
+/** Percentage text the way X writes it: one decimal, trailing ".0" dropped. */
+export function formatPollPercent(part: number, total: number): string {
+  if (total <= 0) return '0%';
+  const value = Math.round((part / total) * 1000) / 10;
+  return `${Number.isInteger(value) ? value : value.toFixed(1)}%`;
+}
+
+/**
+ * The poll block, in the same slot the card would take. Option pills while the
+ * post still votes; result bars once results show — a bar keeps the page's own
+ * percentage text when it was the source, and every choice tied on top counts
+ * as leading, exactly like the bold rows on the page.
+ */
+function renderPoll(poll: Poll, options: CardOptions): HTMLElement | null {
+  const choices = poll.choices.filter((choice) => choice.label);
+  if (choices.length === 0) return null;
+  const box = document.createElement('div');
+  box.className = 'postnote-poll';
+  const display = poll.display ?? (poll.final || poll.voted ? 'results' : 'options');
+  const total = choices.reduce((sum, choice) => sum + (choice.count ?? 0), 0);
+  const drawable = choices.some((choice) => choice.count !== null || choice.pct);
+  if (display === 'results' && drawable) {
+    const top = choices.reduce((best, choice) => Math.max(best, choice.count ?? 0), 0);
+    for (const choice of choices) {
+      const pct = choice.pct ?? formatPollPercent(choice.count ?? 0, total);
+      const win =
+        choice.win ?? (choice.count !== null && total > 0 && choice.count === top);
+      const row = document.createElement('div');
+      row.className = `postnote-pr${win ? ' is-win' : ''}`;
+      const fill = document.createElement('span');
+      fill.className = 'postnote-pr-fill';
+      fill.style.width = pct;
+      const label = document.createElement('span');
+      label.className = 'postnote-pr-label';
+      label.textContent = choice.label;
+      const number = document.createElement('span');
+      number.className = 'postnote-pr-pct';
+      number.textContent = pct;
+      row.append(fill, label, number);
+      box.appendChild(row);
+    }
+  } else {
+    for (const choice of choices) {
+      const option = document.createElement('div');
+      option.className = 'postnote-po';
+      option.textContent = choice.label;
+      box.appendChild(option);
+    }
+  }
+  const meta =
+    poll.meta ?? pollMeta({ ...poll, choices }, options.language, options.traditional);
+  if (meta) {
+    const line = document.createElement('div');
+    line.className = 'postnote-poll-meta';
+    line.textContent = meta;
+    box.appendChild(line);
+  }
+  return box;
+}
+
+/** The "Show this poll" line X prints inside a quote box that carries a poll. */
+function renderQuotePollLine(options: CardOptions): HTMLElement {
+  const line = document.createElement('div');
+  line.className = 'postnote-qpoll';
+  line.textContent = pollRevealLabel(options.language, options.traditional);
+  return line;
+}
+
 /** The author line X shows inside a quote box. */
 function renderQuoteHead(
   quote: Extract<TweetData['quote'], { kind: 'readable' }>,
@@ -317,6 +510,9 @@ function renderQuote(quote: TweetData['quote'], options: CardOptions): HTMLEleme
 
   box.appendChild(renderQuoteHead(quote, options));
   if (quote.body.length > 0) box.appendChild(renderBody(quote.body, 'postnote-qtext'));
+  // X never draws a poll inside a quote box — it prints a link line right
+  // under the quote's text instead.
+  if (quote.poll) box.appendChild(renderQuotePollLine(options));
   if (quote.images.length > 0) {
     box.appendChild(
       renderMediaStack(quote.images, 'postnote-qmedia', 'quote-media', options),
@@ -357,6 +553,7 @@ function renderQuote(quote: TweetData['quote'], options: CardOptions): HTMLEleme
     }
     if (inner.body.length > 0) row.appendChild(renderBody(inner.body, 'postnote-qtext'));
     nested.appendChild(row);
+    if (inner.poll) nested.appendChild(renderQuotePollLine(options));
     box.appendChild(nested);
   } else if (inner.kind === 'unreadable') {
     const nested = document.createElement('div');
@@ -453,6 +650,9 @@ export function renderCard(
   if (data.images.length > 0) {
     content.appendChild(renderMediaStack(data.images, 'postnote-media', 'media', options));
   }
+  if (data.card) content.appendChild(renderLinkCard(data.card, options));
+  const poll = data.poll ? renderPoll(data.poll, options) : null;
+  if (poll) content.appendChild(poll);
   const quote = renderQuote(data.quote, options);
   if (quote) content.appendChild(quote);
   const stamp = renderStamp(data, options);

@@ -108,6 +108,11 @@ export type Quote =
       body: BodySegment[];
       images: Media[];
       /**
+       * The quoted post carries a poll; X never draws it inside a quote, it
+       * shows a "显示此投票" link line instead — and so does the export.
+       */
+      poll: boolean;
+      /**
        * The post this quoted post itself quotes — X renders one level inside a
        * quote, compactly. `none` when there is none, `unreadable` when the
        * source marked it unavailable, `readable` with its own `nested` set to
@@ -115,6 +120,50 @@ export type Quote =
        */
       nested: Quote;
     };
+
+/**
+ * A link preview card under the post, drawn the way X draws it: `large` is the
+ * wide image card (`summary_large_image`), `small` the thumbnail row
+ * (`summary` and `player`). `player` marks the small card that carries a play
+ * button over its thumbnail.
+ */
+export type LinkCard = {
+  layout: 'large' | 'small';
+  player: boolean;
+  /** The card's expanded link; falls back to the card's own URL when unread. */
+  url: string;
+  /** `vanity_url` first, then `domain`. */
+  domain: string;
+  title: string;
+  description: string;
+  image: { src: string; width?: number; height?: number } | null;
+};
+
+export type PollChoice = {
+  label: string;
+  /** Vote count; null when the source (a page read) only exposed percentages. */
+  count: number | null;
+  /** The percentage text read off the page, when the page was the source. */
+  pct?: string;
+  /** The page's own leading mark, when the page was the source. */
+  win?: boolean;
+};
+
+export type Poll = {
+  choices: PollChoice[];
+  /** `counts_are_final`: the vote is closed. */
+  final: boolean;
+  /** The reader already voted (`selected_choice` present), so results show. */
+  voted?: boolean;
+  endsAt: string | null;
+  /**
+   * Decided at read time from what the page shows — same rule as the
+   * translation flag: the snapshot stays pure data, the DOM decides display.
+   */
+  display?: 'options' | 'results';
+  /** The page's own "N votes · …" line, kept verbatim when it was read. */
+  meta?: string | null;
+};
 
 export type TweetData = {
   /** Stable id of this post itself, never taken from quoted content. */
@@ -124,6 +173,10 @@ export type TweetData = {
   time: TweetTime;
   body: BodySegment[];
   images: Media[];
+  /** Link preview card; absent when the card is of a kind X does not draw. */
+  card?: LinkCard | null;
+  /** Poll card; absent when there is none or it could not be read. */
+  poll?: Poll | null;
   quote: Quote;
   metrics: Metrics;
   reply: ReplyRelation;
@@ -134,7 +187,6 @@ export type ExtractFailure =
   | 'no-status-id'
   | 'no-content'
   | 'unsupported-media'
-  | 'unsupported-poll'
   | 'read-error';
 
 export type ExtractWarning =

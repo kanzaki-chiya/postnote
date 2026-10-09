@@ -17,6 +17,7 @@ import {
   EXTRACT_WARNINGS,
   UI,
   chainNotice,
+  pollMeta,
   progressNotice,
   savedNotice,
   scaledNotice,
@@ -46,7 +47,9 @@ import {
   getArticleStatusId,
   getPageLanguage,
   hasCollapsedText,
+  ownPollElement,
   postTextLength,
+  readPollElement,
   readTweet,
   showsTranslation,
 } from './x-page';
@@ -351,6 +354,38 @@ function materialize(snapshot: TweetSnapshot, preferTranslation: boolean): Tweet
   return { ...snapshot.data, body: snapshot.translatedBody };
 }
 
+/**
+ * Draw a poll the way the page draws it — option pills while it is still
+ * votable, result bars once results show — the same rule the translation flag
+ * follows. When this post's poll is rendered on the page, that element decides
+ * both display and the "N votes · …" line; when it is not (an ancestor that is
+ * no longer rendered), the card data decides instead.
+ */
+function withPollDisplay(
+  data: TweetData,
+  pollElement: Element | null,
+  language: PageLanguage,
+  traditional: boolean,
+): TweetData {
+  const pagePoll = pollElement ? readPollElement(pollElement) : null;
+  const poll = data.poll ?? pagePoll;
+  if (!poll) return data;
+  const display = pagePoll?.display ?? (poll.final || poll.voted ? 'results' : 'options');
+  // Result rows keep the page's own percentages and leader marks when it was
+  // the source of truth; the card data's counts decide otherwise.
+  const choices =
+    pagePoll?.display === 'results' && pagePoll.choices.length === poll.choices.length
+      ? poll.choices.map((choice, index) => ({
+          ...choice,
+          pct: pagePoll.choices[index].pct ?? choice.pct,
+          win: pagePoll.choices[index].win ?? choice.win,
+        }))
+      : poll.choices;
+  const meta =
+    pagePoll?.meta ?? poll.meta ?? (pollMeta({ ...poll, choices }, language, traditional) || null);
+  return { ...data, poll: { ...poll, choices, display, meta } };
+}
+
 /** Read one post, preferring the data the page already loaded. */
 async function readPost(
   article: HTMLElement,
@@ -361,9 +396,6 @@ async function readPost(
 
   if (snapshot) {
     // A snapshot carries the full text already, so there is nothing to expand.
-    if (snapshot.poll || article.querySelector('[data-testid="cardPoll"], [data-testid="poll"]')) {
-      return { ok: false, failure: 'unsupported-poll' };
-    }
     const translated = showsTranslation(article);
     let data = materialize(snapshot, translated);
     if (translated && !snapshot.translatedBody) {
@@ -373,6 +405,12 @@ async function readPost(
       if (!visible.ok) return visible;
       data = { ...data, body: visible.data.body };
     }
+    data = withPollDisplay(
+      data,
+      ownPollElement(article),
+      getPageLanguage(document),
+      isTraditional(document),
+    );
     const blocking = snapshot.warnings.find((warning) =>
       BLOCKING_WARNINGS.includes(warning),
     );
@@ -462,22 +500,26 @@ async function savePost(article: HTMLElement, button: HTMLButtonElement): Promis
     for (const id of ancestorIds) {
       const snapshot = snapshotOf(id);
       if (snapshot) {
-        if (snapshot.poll) {
-          toast.update(EXTRACT_FAILURES['unsupported-poll'][language], 'error');
-          return;
-        }
         const blocking = snapshot.warnings.find((warning) =>
           BLOCKING_WARNINGS.includes(warning),
         );
         const visible = findTweetById(id);
         if (visible) {
           const read = await readPost(visible, controller.signal);
-          if (!read.ok && read.failure === 'unsupported-poll') {
-            toast.update(EXTRACT_FAILURES['unsupported-poll'][language], 'error');
-            return;
-          }
           resolved.push(read.ok ? read.data : null);
-        } else resolved.push(blocking ? null : materialize(snapshot, preferTranslation));
+        } else {
+          // Not rendered: the card data alone decides how its poll draws.
+          resolved.push(
+            blocking
+              ? null
+              : withPollDisplay(
+                  materialize(snapshot, preferTranslation),
+                  null,
+                  language,
+                  traditional,
+                ),
+          );
+        }
         continue;
       }
       const ancestorArticle = findTweetById(id);
@@ -494,10 +536,6 @@ async function savePost(article: HTMLElement, button: HTMLButtonElement): Promis
       const read = readTweet(ancestorArticle, {
         isDetailMain: ancestorArticle === findDetailMainTweet(),
       });
-      if (!read.ok && read.failure === 'unsupported-poll') {
-        toast.update(EXTRACT_FAILURES['unsupported-poll'][language], 'error');
-        return;
-      }
       if (!read.ok || read.warnings.some((warning) => BLOCKING_WARNINGS.includes(warning))) {
         resolved.push(null);
         continue;

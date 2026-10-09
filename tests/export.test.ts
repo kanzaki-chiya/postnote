@@ -90,6 +90,66 @@ describe('preparing resources', () => {
     expect(report.degraded).toHaveLength(1);
   });
 
+  it('degrades a failed large card image into the card\'s text layout', async () => {
+    const card = cardWith({
+      card: {
+        layout: 'large',
+        player: false,
+        url: 'https://x.com',
+        domain: 'x.com',
+        title: 'Card title',
+        description: 'Card summary',
+        image: { src: 'data:image/png;base64,bad', width: 800, height: 419 },
+      },
+    });
+    const report = await prepareCard(card, { cache: new Map(), ...SHORT_TIMEOUT });
+    expect(report.blocking).toHaveLength(0);
+    expect(report.degraded).toEqual([
+      { role: 'card-media', src: 'data:image/png;base64,bad', reason: 'decode' },
+    ]);
+    expect(card.querySelector('.postnote-lcard')).toBeNull();
+    expect(card.querySelector('.postnote-scard-title')?.textContent).toBe('Card title');
+  });
+
+  it('degrades a failed small card thumbnail but keeps the card text', async () => {
+    const card = cardWith({
+      card: {
+        layout: 'small',
+        player: true,
+        url: 'https://x.com',
+        domain: 'x.com',
+        title: 'Card title',
+        description: 'Card summary',
+        image: { src: 'https://pbs.twimg.com/card_img/1/a?format=jpg&name=280x150' },
+      },
+    });
+    const report = await prepareCard(card, { cache: new Map(), ...SHORT_TIMEOUT });
+    expect(report.blocking).toHaveLength(0);
+    expect(report.degraded[0]?.role).toBe('card-media');
+    const small = card.querySelector('.postnote-scard')!;
+    expect(small.classList.contains('no-media')).toBe(true);
+    expect(small.querySelector('img')).toBeNull();
+    expect(small.querySelector('.postnote-scard-domain')?.textContent).toBe('x.com');
+  });
+
+  it('still stops when real media cannot be loaded', async () => {
+    const card = cardWith({
+      images: [{ kind: 'photo', src: 'data:image/png;base64,bad', alt: '' }],
+      card: {
+        layout: 'small',
+        player: false,
+        url: 'https://x.com',
+        domain: 'x.com',
+        title: 'Card title',
+        description: '',
+        image: { src: 'data:image/png;base64,also-bad' },
+      },
+    });
+    const report = await prepareCard(card, { cache: new Map(), ...SHORT_TIMEOUT });
+    expect(report.blocking.map((entry) => entry.role)).toEqual(['media']);
+    expect(report.degraded.map((entry) => entry.role)).toEqual(['card-media']);
+  });
+
   it('stops working when the run is cancelled', async () => {
     const controller = new AbortController();
     const card = cardWith({ images: [{ kind: 'photo', src: 'https://abs.twimg.com/emoji/1f600.svg', alt: '' }] });

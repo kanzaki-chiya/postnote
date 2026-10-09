@@ -14,9 +14,12 @@ import type {
   Author,
   ExtractFailure,
   ExtractWarning,
+  LinkCard,
   Media,
   Metrics,
   PageLanguage,
+  Poll,
+  PollChoice,
   Quote,
   ReplyRelation,
   TweetData,
@@ -45,8 +48,20 @@ const STATUS_ID_PATTERN = /\/status\/(\d+)/;
 const QUOTE_WRAPPER_SELECTOR =
   '[data-testid="card.wrapper"], div[role="link"][tabindex="0"]';
 
-/** X's own markers for a poll card, which still cannot be exported. */
+/** X's own marker for a poll card. */
 const POLL_SELECTOR = '[data-testid="cardPoll"], [data-testid="poll"]';
+
+/** X's own marker for a link preview card (a quote wrapper may share it). */
+const LINK_CARD_SELECTOR = '[data-testid="card.wrapper"]';
+
+/** Card images are fetched like media: only the hosts the export may request. */
+const CARD_IMAGE_HOSTS: Record<string, true> = {
+  'pbs.twimg.com': true,
+  'abs.twimg.com': true,
+};
+
+/** The "From X" prefix under a large card, in the languages the page uses. */
+const CARD_FROM_PREFIX = /^(?:来自|來自|from)\s+/i;
 
 /** Containers that mean the post carries video or GIF media. */
 const VIDEO_CONTAINER_SELECTOR = [
@@ -251,6 +266,27 @@ function findQuoteWrapper(article: HTMLElement): Element | null {
   return outermost ?? null;
 }
 
+/** The link X draws inside a quote box in place of the quoted post's poll. */
+const QUOTE_POLL_TEXT = /^(?:显示此投票|顯示此投票|show this poll)$/i;
+
+/**
+ * Whether the quoted post carries a poll: either the cardPoll element the page
+ * rendered for it, or the "显示此投票" line X substitutes for it. A nested
+ * quote's own marker does not count for the outer quote.
+ */
+function quoteHasPoll(wrapper: Element, excluded: Element | null): boolean {
+  const hasCard = Array.from(wrapper.querySelectorAll(POLL_SELECTOR)).some(
+    (element) => isOutside(element, excluded),
+  );
+  if (hasCard) return true;
+  return Array.from(wrapper.querySelectorAll('*')).some(
+    (element) =>
+      element.children.length === 0 &&
+      isOutside(element, excluded) &&
+      QUOTE_POLL_TEXT.test(collapse(element.textContent)),
+  );
+}
+
 function readQuote(wrapper: Element, depth: number): Quote {
   const element = wrapper as HTMLElement;
   const body = readBody(findTextRoot(element, null) ?? element);
@@ -258,15 +294,13 @@ function readQuote(wrapper: Element, depth: number): Quote {
   if (images.length === 0 && !hasVisibleBody(body)) return { kind: 'unreadable' };
   const author = readAuthor(element, null);
   const permalink = readPermalink(element, null, author.handle);
-  const nested: Quote =
+  const inner =
     depth === 0
-      ? (() => {
-          const inner = Array.from(
-            element.querySelectorAll(QUOTE_WRAPPER_SELECTOR),
-          ).find((candidate) => isLikelyQuote(candidate));
-          return inner ? readQuote(inner, depth + 1) : { kind: 'none' };
-        })()
-      : { kind: 'none' };
+      ? Array.from(element.querySelectorAll(QUOTE_WRAPPER_SELECTOR)).find((candidate) =>
+          isLikelyQuote(candidate),
+        ) ?? null
+      : null;
+  const nested: Quote = inner ? readQuote(inner, depth + 1) : { kind: 'none' };
   return {
     kind: 'readable',
     id: permalink?.id ?? null,
@@ -275,6 +309,7 @@ function readQuote(wrapper: Element, depth: number): Quote {
     time: readTime(element, null),
     body,
     images,
+    poll: quoteHasPoll(element, inner),
     nested,
   };
 }
@@ -371,10 +406,201 @@ function readMetrics(
   return metrics;
 }
 
-function findPoll(article: HTMLElement, excluded: Element | null): boolean {
-  return Array.from(article.querySelectorAll(POLL_SELECTOR)).some((element) =>
-    isOutside(element, excluded),
+/** The post's own cardPoll element — one inside the quote box is the quote's. */
+function findPollElement(article: HTMLElement, excluded: Element | null): Element | null {
+  return (
+    Array.from(article.querySelectorAll(POLL_SELECTOR)).find((element) =>
+      isOutside(element, excluded),
+    ) ?? null
   );
+}
+
+/**
+ * The post's own poll card as rendered, for callers that decide how to draw
+ * it. Null when the page shows no poll outside the quote box.
+ */
+export function ownPollElement(article: HTMLElement): Element | null {
+  return findPollElement(article, findQuoteWrapper(article));
+}
+
+/** The cardPoll's last grey line: "9 票 · 剩下 2 天" / "N votes · …". */
+function pollMetaText(poll: Element): string | null {
+  const word = /votes?|票|結果|结果|left|剩下|剩余|餘下|final/i;
+  const matches = Array.from(poll.querySelectorAll('*')).filter((element) => {
+    const text = collapse(element.textContent);
+    return (
+      text.includes('·') &&
+      word.test(text) &&
+      !text.includes('%') &&
+      !element.querySelector('[role="radiogroup"], [role="radio"]')
+    );
+  });
+  const outermost = matches.find(
+    (element) => !matches.some((other) => other !== element && other.contains(element)),
+  );
+  if (!outermost) return null;
+  // The page writes the line as separate spans ("12 票", "·", "剩下 2 天"):
+  // join the leaf pieces with single spaces rather than collapsing them into
+  // one run, which would lose the spaces around the middle dot.
+  const pieces = leafElements(outermost)
+    .map((element) => collapse(element.textContent))
+    .filter(Boolean);
+  const text = pieces.length ? pieces.join(' ') : collapse(outermost.textContent);
+  return text || null;
+}
+
+/** Text-bearing leaf elements, in document order. */
+function leafElements(scope: Element): Element[] {
+  return Array.from(scope.querySelectorAll('*')).filter(
+    (element) => element.children.length === 0 && collapse(element.textContent).length > 0,
+  );
+}
+
+const PERCENT_PATTERN = /^[\d.]+%$/;
+
+/**
+ * Poll result rows the way the page draws them: each row is the smallest
+ * container holding a percentage plus a label, and the leaders are the bold
+ * ones (X marks them with font-weight 700).
+ */
+function pollResultRows(poll: Element): PollChoice[] {
+  const choices: PollChoice[] = [];
+  const taken: Element[] = [];
+  for (const leaf of leafElements(poll)) {
+    if (!PERCENT_PATTERN.test(collapse(leaf.textContent))) continue;
+    let row = leaf.parentElement;
+    while (row && row !== poll && leafElements(row).length < 2) {
+      row = row.parentElement;
+    }
+    if (!row || row === poll || taken.includes(row)) continue;
+    taken.push(row);
+    const leaves = leafElements(row);
+    const pctLeaf = leaves.find((element) =>
+      PERCENT_PATTERN.test(collapse(element.textContent)),
+    );
+    const labelLeaf = leaves.find((element) => element !== pctLeaf);
+    const label = collapse(labelLeaf?.textContent);
+    const pct = collapse(pctLeaf?.textContent);
+    if (!label || !pct) continue;
+    const weight = (element: Element | undefined) =>
+      element ? parseFloat(getComputedStyle(element).fontWeight) : NaN;
+    const win = Math.max(weight(labelLeaf), weight(pctLeaf)) >= 700;
+    choices.push({ label, count: null, pct, win });
+  }
+  return choices;
+}
+
+/**
+ * A rendered cardPoll, read the way the page shows it: option pills while a
+ * radiogroup is present, result bars otherwise. The page's own meta line and
+ * its bolded leaders are kept, so a fallback read matches what the user saw.
+ */
+export function readPollElement(poll: Element): Poll | null {
+  const meta = pollMetaText(poll);
+  const radios = poll.querySelector('[role="radiogroup"]');
+  if (radios) {
+    const choices = Array.from(radios.querySelectorAll('[role="radio"]'))
+      .map((radio): PollChoice => ({ label: collapse(radio.textContent), count: null }))
+      .filter((choice) => choice.label);
+    return choices.length > 0
+      ? { choices, final: false, endsAt: null, display: 'options', meta }
+      : null;
+  }
+  const choices = pollResultRows(poll);
+  if (choices.length === 0) return null;
+  return {
+    choices,
+    final: /final|結果|结果/i.test(meta ?? ''),
+    endsAt: null,
+    display: 'results',
+    meta,
+  };
+}
+
+/** The post's own link card wrapper: outside the quote box and not a quote. */
+function findCardWrapper(article: HTMLElement, excluded: Element | null): Element | null {
+  return (
+    Array.from(article.querySelectorAll(LINK_CARD_SELECTOR)).find(
+      (element) => isOutside(element, excluded) && !isLikelyQuote(element),
+    ) ?? null
+  );
+}
+
+/** A card thumbnail that may be fetched, or null — anything else is no image. */
+function cardImage(scope: Element | null | undefined): LinkCard['image'] {
+  const image = scope?.querySelector('img');
+  const url = toAbsoluteUrl(image?.currentSrc || image?.getAttribute('src'));
+  if (!url || CARD_IMAGE_HOSTS[url.hostname] !== true) return null;
+  return {
+    src: url.href,
+    width: image && image.naturalWidth > 0 ? image.naturalWidth : undefined,
+    height: image && image.naturalHeight > 0 ? image.naturalHeight : undefined,
+  };
+}
+
+/** The address the card links to, when the wrapper exposes one. */
+function cardHref(wrapper: Element): string {
+  const anchor = wrapper.closest('a') ?? wrapper.querySelector('a[href]');
+  return toAbsoluteUrl(anchor?.getAttribute('href'))?.href ?? '';
+}
+
+/** The "来自 X / From X" line's domain, read off a leaf element's own text. */
+function cardDomain(wrapper: Element, skip: Element | null): string {
+  for (const element of Array.from(wrapper.querySelectorAll('*'))) {
+    if (element.children.length > 0) continue;
+    if (skip?.contains(element)) continue;
+    const text = collapse(element.textContent);
+    const match = text.match(CARD_FROM_PREFIX);
+    if (match) return text.slice(match[0].length);
+  }
+  return '';
+}
+
+/**
+ * The rendered link card. What cannot be fully read returns null and the
+ * caller keeps the link visible in the body instead of dropping it.
+ */
+function readLinkCard(wrapper: Element): LinkCard | null {
+  const largeMedia = wrapper.querySelector('[data-testid="card.layoutLarge.media"]');
+  const smallMedia = wrapper.querySelector('[data-testid="card.layoutSmall.media"]');
+  const smallDetail = wrapper.querySelector('[data-testid="card.layoutSmall.detail"]');
+  if (largeMedia) {
+    // The box's only text is the title chip pinned over the image's bottom.
+    const title = collapse(largeMedia.textContent);
+    if (!title) return null;
+    return {
+      layout: 'large',
+      player: false,
+      url: cardHref(wrapper),
+      domain: cardDomain(wrapper, largeMedia),
+      title,
+      description: '',
+      image: cardImage(largeMedia),
+    };
+  }
+  if (smallMedia || smallDetail) {
+    // X writes the small card's detail as three rows: domain, title, summary.
+    const texts = smallDetail
+      ? Array.from(smallDetail.children)
+          .map((element) => collapse(element.textContent))
+          .filter(Boolean)
+      : [];
+    const title = texts.length >= 2 ? texts[1] : '';
+    if (!title) return null;
+    return {
+      layout: 'small',
+      player: Boolean(
+        smallMedia &&
+          Array.from(smallMedia.children).some((child) => child.tagName !== 'IMG'),
+      ),
+      url: cardHref(wrapper),
+      domain: texts[0] ?? cardDomain(wrapper, smallDetail),
+      title,
+      description: texts[2] ?? '',
+      image: cardImage(smallMedia),
+    };
+  }
+  return null;
 }
 
 /**
@@ -506,9 +732,6 @@ export function readTweet(article: HTMLElement, options: ReadOptions = {}): Twee
     const author = readAuthor(article, quoteWrapper);
     const permalink = readPermalink(article, quoteWrapper, author.handle);
     if (!permalink) return { ok: false, failure: 'no-status-id' };
-    if (findPoll(article, quoteWrapper)) {
-      return { ok: false, failure: 'unsupported-poll' };
-    }
 
     const body = readBody(findTextRoot(article, quoteWrapper) ?? document.createElement('div'));
     const images: Media[] = [
@@ -516,7 +739,31 @@ export function readTweet(article: HTMLElement, options: ReadOptions = {}): Twee
       ...readVideoPoster(article, quoteWrapper),
     ];
     const quote: Quote = quoteWrapper ? readQuote(quoteWrapper, 0) : { kind: 'none' };
-    if (!hasVisibleBody(body) && images.length === 0 && quote.kind !== 'readable') {
+    // The card the page draws for the post's own link — X already hid the
+    // matching t.co from the text. When the card itself cannot be read the
+    // link is kept as a plain body link instead of vanishing with the card.
+    const cardElement = findCardWrapper(article, quoteWrapper);
+    const card = cardElement ? readLinkCard(cardElement) : null;
+    if (cardElement && !card) {
+      const href = cardHref(cardElement);
+      const detail = cardElement.querySelector('[data-testid="card.layoutSmall.detail"]');
+      const firstRow = collapse(detail?.firstElementChild?.textContent);
+      const text = cardDomain(cardElement, null) || firstRow || href;
+      if (text) {
+        if (hasVisibleBody(body)) body.push({ kind: 'text', text: ' ' });
+        body.push(href ? { kind: 'link', text, href } : { kind: 'text', text });
+      }
+    }
+    // A poll reads the way the page shows it; an unreadable one draws nothing.
+    const pollElement = findPollElement(article, quoteWrapper);
+    const poll = pollElement ? readPollElement(pollElement) : null;
+    if (
+      !hasVisibleBody(body) &&
+      images.length === 0 &&
+      quote.kind !== 'readable' &&
+      !card &&
+      !poll
+    ) {
       return { ok: false, failure: 'no-content' };
     }
 
@@ -548,6 +795,8 @@ export function readTweet(article: HTMLElement, options: ReadOptions = {}): Twee
       time: readTime(article, quoteWrapper),
       body,
       images,
+      card,
+      poll,
       quote,
       metrics: readMetrics(article, quoteWrapper, Boolean(options.isDetailMain)),
       reply: UNKNOWN_REPLY,

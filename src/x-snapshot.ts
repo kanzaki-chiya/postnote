@@ -17,8 +17,11 @@ import type {
   Author,
   BodySegment,
   ExtractWarning,
+  LinkCard,
   Media,
   Metrics,
+  Poll,
+  PollChoice,
   Quote,
   TweetData,
   TweetTime,
@@ -88,6 +91,12 @@ function pushTextWithEmoji(text: string, out: BodySegment[]): void {
 
 type RawEntity = { indices?: unknown } & Raw;
 
+/** `entitySet[key]` as an array of raw objects, or []. */
+function entityList(entitySet: unknown, key: string): Raw[] {
+  const entities = asObject(entitySet);
+  return Array.isArray(entities?.[key]) ? (entities[key] as Raw[]) : [];
+}
+
 /** The `[start, end)` code-point pair of an entity, or null when malformed. */
 function entityRange(entity: unknown): [number, number] | null {
   const indices = (entity as RawEntity).indices;
@@ -117,6 +126,7 @@ export function bodyFromEntities(
   entitySet: unknown,
   range?: [number, number] | null,
   extraMedia?: unknown,
+  hiddenUrl?: string | null,
 ): BodySegment[] {
   const chars = Array.from(text);
   const [from, to] = [
@@ -131,9 +141,9 @@ export function bodyFromEntities(
   const list = (key: string): Raw[] =>
     Array.isArray(entities[key]) ? (entities[key] as Raw[]) : [];
 
-  // A media attachment's t.co link is not body text, even when X's display
-  // range covers it (a post that is only a re-shared video, for example).
-  let mediaDropped = false;
+  // Links that stand in for attached media or for the post's own link card
+  // are not body text, even when X's display range covers them.
+  let dropped = false;
   const mediaList = [...list('media'), ...(Array.isArray(extraMedia) ? (extraMedia as Raw[]) : [])];
   for (const media of mediaList) {
     const span = entityRange(media);
@@ -142,7 +152,7 @@ export function bodyFromEntities(
       start: span[0],
       end: span[1],
       build: () => {
-        mediaDropped = true;
+        dropped = true;
         return [];
       },
     });
@@ -150,6 +160,24 @@ export function bodyFromEntities(
   for (const urlEntity of list('urls')) {
     const span = entityRange(urlEntity);
     if (!span || !inside(span)) continue;
+    // A link card's own t.co is hidden only at the very end of the displayed
+    // text — the spot where the page swaps it for the card. The same URL in
+    // the middle of the text, or any link when no card was read, stays.
+    if (
+      hiddenUrl &&
+      asString(urlEntity.url) === hiddenUrl &&
+      chars.slice(span[1], to).every((char) => /\s/.test(char))
+    ) {
+      marks.push({
+        start: span[0],
+        end: span[1],
+        build: () => {
+          dropped = true;
+          return [];
+        },
+      });
+      continue;
+    }
     const href =
       toAbsoluteUrl(asString(urlEntity.expanded_url) ?? asString(urlEntity.url))?.href ?? null;
     const display = asString(urlEntity.display_url) ?? sliceOf(span);
@@ -223,7 +251,7 @@ export function bodyFromEntities(
   }
   if (cursor < to) pushTextWithEmoji(chars.slice(cursor, to).join(''), out);
 
-  if (mediaDropped) trimEdges(out);
+  if (dropped) trimEdges(out);
   return out;
 }
 
@@ -386,22 +414,165 @@ function noteText(tweet: Raw): { text: string; entities: unknown } | null {
   return note && text !== null ? { text, entities: note.entity_set } : null;
 }
 
-function translationOf(tweet: Raw): { body: BodySegment[] } | null {
+function translationOf(tweet: Raw, hiddenUrl?: string | null): { body: BodySegment[] } | null {
   const translated = asObject(tweet.grok_translated_post_with_availability);
   if (translated?.is_available !== true) return null;
   const data = asObject(translated.data);
   const text = asString(data?.translation);
   if (!text) return null;
-  return { body: bodyFromEntities(text, data?.entities, null) };
+  return { body: bodyFromEntities(text, data?.entities, null, undefined, hiddenUrl) };
 }
 
-function hasPoll(tweet: Raw): boolean {
-  const name =
-    asString(asObject(tweet.card)?.name) ??
-    asString(asObject(asObject(tweet.card)?.legacy)?.name) ??
-    asString(asObject(asObject(tweet.legacy)?.card)?.name) ??
-    '';
-  return /poll/i.test(name);
+/** Where the card payload lives: `card.legacy` normally, `card` itself otherwise. */
+function cardHolder(tweet: Raw): Raw | null {
+  const candidates = [asObject(tweet.card), asObject(asObject(tweet.legacy)?.card)];
+  for (const card of candidates) {
+    if (!card) continue;
+    const legacy = asObject(card.legacy);
+    if (legacy) return legacy;
+    if (asString(card.name)) return card;
+  }
+  return null;
+}
+
+/** `binding_values` as a key → value map; each value carries a `type`. */
+function cardBindings(holder: Raw): Map<string, Raw> {
+  const map = new Map<string, Raw>();
+  const list = holder.binding_values;
+  if (!Array.isArray(list)) return map;
+  for (const entry of list) {
+    const item = asObject(entry);
+    const key = asString(item?.key);
+    const value = asObject(item?.value);
+    if (key && value) map.set(key, value);
+  }
+  return map;
+}
+
+function bindingString(bindings: Map<string, Raw>, key: string): string | null {
+  return asString(bindings.get(key)?.string_value);
+}
+
+/** A card image that may be fetched, or null — anything else counts as no image. */
+function bindingImage(bindings: Map<string, Raw>, key: string): LinkCard['image'] {
+  const image = asObject(bindings.get(key)?.image_value);
+  const src = mediaUrl(image?.url);
+  if (!image || !src) return null;
+  return {
+    src,
+    width: typeof image.width === 'number' ? image.width : undefined,
+    height: typeof image.height === 'number' ? image.height : undefined,
+  };
+}
+
+const LINK_CARD_LAYOUTS: Record<string, LinkCard['layout']> = {
+  summary_large_image: 'large',
+  summary: 'small',
+  player: 'small',
+};
+
+/** Image keys, in the order the card kind prefers them. */
+const CARD_IMAGE_KEYS: Record<string, string[]> = {
+  summary_large_image: [
+    'photo_image_full_size_large',
+    'photo_image_full_size_original',
+    'summary_photo_image_large',
+    'thumbnail_image_original',
+  ],
+  summary: ['thumbnail_image_large', 'thumbnail_image', 'thumbnail_image_original'],
+  player: ['player_image_large', 'player_image', 'player_image_original'],
+};
+
+/**
+ * A `summary_large_image` / `summary` / `player` card. Every other name —
+ * `unified_card` included — is not a card X draws as a link preview.
+ */
+function readLinkCard(
+  holder: Raw,
+  bindings: Map<string, Raw>,
+  urlEntities: Raw[],
+): { card: LinkCard; hiddenUrl: string | null } | null {
+  const name = asString(holder.name) ?? '';
+  const layout = LINK_CARD_LAYOUTS[name];
+  if (!layout) return null;
+  const title = bindingString(bindings, 'title');
+  if (!title) return null;
+  const ownUrl = asString(holder.url) ?? '';
+  const entity = urlEntities.find(
+    (entry) => asString(asObject(entry)?.url) === ownUrl,
+  );
+  const url =
+    toAbsoluteUrl(asString(asObject(entity)?.expanded_url))?.href ??
+    toAbsoluteUrl(bindingString(bindings, 'card_url'))?.href ??
+    ownUrl;
+  const image =
+    CARD_IMAGE_KEYS[name].map((key) => bindingImage(bindings, key)).find(Boolean) ?? null;
+  return {
+    card: {
+      layout,
+      player: name === 'player',
+      url,
+      domain:
+        bindingString(bindings, 'vanity_url') ?? bindingString(bindings, 'domain') ?? '',
+      title,
+      description: bindingString(bindings, 'description') ?? '',
+      image,
+    },
+    hiddenUrl: ownUrl || null,
+  };
+}
+
+/** `end_datetime_utc` text as ISO, or null when it cannot be read. */
+function cardTime(raw: string | null): string | null {
+  const ms = raw ? new Date(raw).getTime() : NaN;
+  return Number.isFinite(ms) ? new Date(ms).toISOString() : null;
+}
+
+/** A `*poll*` card binding set as a Poll; null when it yields no choices. */
+function readPollCard(bindings: Map<string, Raw>): Poll | null {
+  const choices: PollChoice[] = [];
+  for (let index = 1; index <= 4; index += 1) {
+    const label = bindingString(bindings, `choice${index}_label`);
+    if (!label) continue;
+    const raw = bindingString(bindings, `choice${index}_count`);
+    const count = raw !== null && /^\d+$/.test(raw) ? Number(raw) : null;
+    choices.push({ label, count });
+  }
+  if (!choices.length) return null;
+  const finalFlag = bindings.get('counts_are_final');
+  const final = finalFlag?.string_value === 'true' || finalFlag?.boolean_value === true;
+  let endsAt = cardTime(bindingString(bindings, 'end_datetime_utc'));
+  if (!endsAt) {
+    const updated = cardTime(bindingString(bindings, 'last_updated_datetime_utc'));
+    const minutes = Number(bindingString(bindings, 'duration_minutes'));
+    if (updated && Number.isFinite(minutes) && minutes > 0) {
+      endsAt = new Date(new Date(updated).getTime() + minutes * 60_000).toISOString();
+    }
+  }
+  const voted =
+    Boolean(bindingString(bindings, 'selected_choice')) ||
+    bindings.get('selected_choice')?.boolean_value === true;
+  return { choices, final, voted, endsAt };
+}
+
+/**
+ * The tweet's own card, if X draws one for it. Poll cards come back as
+ * `poll`; `hiddenUrl` is the link card's t.co so the body can drop it the
+ * way the page does.
+ */
+function readCard(
+  tweet: Raw,
+  urlEntities: Raw[],
+): { card: LinkCard | null; poll: Poll | null; hiddenUrl: string | null } | null {
+  const holder = cardHolder(tweet);
+  if (!holder) return null;
+  const name = asString(holder.name) ?? '';
+  const bindings = cardBindings(holder);
+  if (/poll/i.test(name)) {
+    return { card: null, poll: readPollCard(bindings), hiddenUrl: null };
+  }
+  const link = readLinkCard(holder, bindings, urlEntities);
+  return { card: link?.card ?? null, poll: null, hiddenUrl: link?.hiddenUrl ?? null };
 }
 
 function readQuote(tweet: Raw, depth: number, warnings: ExtractWarning[]): Quote {
@@ -444,6 +615,8 @@ function quoteFromNode(node: Raw, depth: number, warnings: ExtractWarning[]): Qu
     time: snapshotTime(legacyInner.created_at),
     body,
     images,
+    // A poll inside a quote stays a "Show this poll" line, on both levels.
+    poll: /poll/i.test(asString(cardHolder(node)?.name) ?? ''),
     nested,
   };
 }
@@ -460,20 +633,10 @@ function readNestedQuote(tweet: Raw, warnings: ExtractWarning[]): Quote {
   return quoteFromNode(node, 1, warnings);
 }
 
-function includesPoll(tweet: Raw, depth = 0): boolean {
-  if (hasPoll(tweet)) return true;
-  if (depth >= 2) return false;
-  const quote = resultNode(tweet.quoted_status_result ?? tweet.quoted_status);
-  const nested = resultNode(tweet.nested_quoted_tweet_results);
-  return Boolean((quote && includesPoll(quote, depth + 1)) || (nested && includesPoll(nested, depth + 1)));
-}
-
 export type TweetSnapshot = {
   data: TweetData;
   /** The translation X delivered, or null when it has none / it was unavailable. */
   translatedBody: BodySegment[] | null;
-  /** The post carries a poll card; exports still refuse it. */
-  poll: boolean;
   warnings: ExtractWarning[];
 };
 
@@ -499,13 +662,21 @@ export function snapshotFromNode(input: unknown): TweetSnapshot | null {
   const range = Array.isArray(legacy.display_text_range)
     ? ([legacy.display_text_range[0], legacy.display_text_range[1]] as [number, number])
     : null;
+  // The card decides whether its own t.co disappears from the body end, so it
+  // is read first; url entities from either text layer resolve its link.
+  const urlEntities = [
+    ...entityList(legacy.entities, 'urls'),
+    ...(note ? entityList(note.entities, 'urls') : []),
+  ];
+  const cardRead = readCard(node, urlEntities);
   const body = note
-    ? bodyFromEntities(note.text, note.entities, null)
+    ? bodyFromEntities(note.text, note.entities, null, undefined, cardRead?.hiddenUrl)
     : bodyFromEntities(
         asString(legacy.full_text) ?? '',
         legacy.entities,
         range,
         asObject(legacy.extended_entities)?.media,
+        cardRead?.hiddenUrl,
       );
   const quote = readQuote(node, 0, warnings);
   if (quote.kind === 'unreadable') warnings.push('quote-unreadable');
@@ -524,12 +695,13 @@ export function snapshotFromNode(input: unknown): TweetSnapshot | null {
       time: snapshotTime(legacy.created_at),
       body,
       images,
+      card: cardRead?.card ?? null,
+      poll: cardRead?.poll ?? null,
       quote,
       metrics: readMetrics(node),
       reply: parentKey ? (parent ? { kind: 'reply', parentId: parent } : { kind: 'root' }) : { kind: 'root' },
     },
-    translatedBody: translationOf(node)?.body ?? null,
-    poll: includesPoll(node),
+    translatedBody: translationOf(node, cardRead?.hiddenUrl)?.body ?? null,
     warnings,
   };
 }
