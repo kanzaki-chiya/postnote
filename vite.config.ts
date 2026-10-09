@@ -1,10 +1,13 @@
-import { defineConfig } from 'vite';
+import { defineConfig } from 'vitest/config';
 import monkey, { cdn } from 'vite-plugin-monkey';
 import pkg from './package.json' with { type: 'json' };
 
 const repo = 'https://github.com/kanzaki-chiya/postnote';
 
 export default defineConfig({
+  test: {
+    css: { include: /style\.css/ },
+  },
   build: {
     target: 'es2020',
     outDir: 'dist',

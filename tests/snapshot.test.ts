@@ -84,6 +84,41 @@ describe('captured GraphQL snapshots', () => {
     }
   });
 
+  it('keeps full translations and entities on both quote levels', () => {
+    const translated = (base: Node, text: string): Node => ({
+      ...base,
+      grok_translated_post_with_availability: {
+        is_available: true,
+        data: { translation: text, preview_translation: '截斷…', entities: {} },
+      },
+    });
+    const inner = translated(nestedNodes[2], '完整內層譯文');
+    const outer = translated(nestedNodes[1], '完整外層譯文');
+    outer.nested_quoted_tweet_results = { result: inner };
+    const result = snapshot({ ...nestedNodes[0], quoted_status_result: { result: outer } });
+    const quote = result.data.quote;
+    if (quote.kind !== 'readable' || quote.nested.kind !== 'readable') throw new Error('missing quotes');
+    expect(bodyText(quote.translatedBody!)).toBe('完整外層譯文');
+    expect(bodyText(quote.nested.translatedBody!)).toBe('完整內層譯文');
+    expect(bodyText(quote.body)).toContain('PR Review');
+
+    const tco = 'https://t.co/media';
+    outer.grok_translated_post_with_availability.data = {
+      translation: `譯文 ${tco}`,
+      entities: { media: [{ url: tco, indices: [3, 3 + tco.length] }] },
+    };
+    const mediaQuote = snapshot({ ...nestedNodes[0], quoted_status_result: { result: outer } }).data.quote;
+    if (mediaQuote.kind !== 'readable') throw new Error('missing quote');
+    expect(bodyText(mediaQuote.translatedBody!)).toBe('譯文');
+    // Quotes do not expand link cards, so their card links remain in either language.
+    outer.grok_translated_post_with_availability.data.entities = {
+      urls: [{ url: tco, indices: [3, 3 + tco.length], expanded_url: 'https://example.com', display_url: 'example.com' }],
+    };
+    const cardQuote = snapshot({ ...nestedNodes[0], quoted_status_result: { result: outer } }).data.quote;
+    if (cardQuote.kind !== 'readable') throw new Error('missing quote');
+    expect(bodyText(cardQuote.translatedBody!)).toBe('譯文 example.com');
+  });
+
   it('draws the actual second quote with a video thumbnail and stops there', () => {
     const result = snapshot(nestedNodes[0]);
     const quote = result.data.quote;
@@ -491,6 +526,87 @@ describe('snapshot-backed export decisions', () => {
     const article = buildPost({ id: '1', text: 'original' });
     attachQuote(article, { text: 'quote' }).append(Object.assign(document.createElement('button'), { textContent: 'Show original' }));
     expect(showsTranslation(article)).toBe(false);
+  });
+
+  it.each([
+    [true, false, false], [false, true, true], [true, true, false], [false, false, true],
+  ])('selects quote languages independently (outer %s, inner %s, main %s)', async (outerTranslated, innerTranslated, mainTranslated) => {
+    const outer = structuredClone(nestedNodes[1]);
+    const inner = structuredClone(nestedNodes[2]);
+    outer.grok_translated_post_with_availability = { is_available: true, data: { translation: '完整外層譯文', entities: {} } };
+    inner.grok_translated_post_with_availability = { is_available: true, data: { translation: '完整內層譯文', entities: {} } };
+    outer.nested_quoted_tweet_results = { result: inner };
+    const node: Node = { ...nestedNodes[0], quoted_status_result: { result: outer } };
+    recordTweets(JSON.stringify(node));
+    const article = buildPost({ id: node.rest_id, text: '主推' });
+    if (mainTranslated) article.append(Object.assign(document.createElement('button'), { textContent: '顯示原文' }));
+    const wrapper = attachQuote(article, { text: '外層截斷…' });
+    const nested = attachQuote(wrapper, { text: '內層截斷…' });
+    if (outerTranslated) wrapper.prepend(Object.assign(document.createElement('span'), { textContent: '翻譯自英文' }));
+    if (innerTranslated) nested.prepend(Object.assign(document.createElement('span'), { textContent: 'Translated from English' }));
+    const sheet = await exportPost(article);
+    const quote = snapshot(node).data.quote;
+    if (quote.kind !== 'readable' || quote.nested.kind !== 'readable') throw new Error('missing quotes');
+    sheet.querySelectorAll('.postnote-qtext br').forEach((br) => br.replaceWith('\n'));
+    expect(sheet.querySelector('.postnote-quote:not(.is-nested) > .postnote-qtext')?.textContent)
+      .toBe(bodyText(outerTranslated ? quote.translatedBody! : quote.body));
+    expect(sheet.querySelector('.postnote-nest .postnote-qtext')?.textContent)
+      .toBe(bodyText(innerTranslated ? quote.nested.translatedBody! : quote.nested.body));
+    expect(sheet.textContent).not.toMatch(/翻譯自|Translated from/);
+    expect(snapshotOf(node.rest_id)!.data.quote).toEqual(quote);
+  });
+
+  it('uses each translated quote DOM body when its snapshot has no translation', async () => {
+    const outer = structuredClone(nestedNodes[1]);
+    const inner = structuredClone(nestedNodes[2]);
+    delete outer.grok_translated_post_with_availability;
+    delete inner.grok_translated_post_with_availability;
+    outer.nested_quoted_tweet_results = { result: inner };
+    const node: Node = { ...nestedNodes[0], quoted_status_result: { result: outer } };
+    recordTweets(JSON.stringify(node));
+    const article = buildPost({ id: node.rest_id, text: '主推' });
+    const wrapper = attachQuote(article, { text: '頁面外層譯文…' });
+    const nested = attachQuote(wrapper, { text: '頁面內層譯文…' });
+    wrapper.prepend(Object.assign(document.createElement('span'), { textContent: '翻译自英文' }));
+    nested.prepend(Object.assign(document.createElement('span'), { textContent: '翻譯自英文' }));
+    const sheet = await exportPost(article);
+    expect(sheet.querySelector('.postnote-quote:not(.is-nested) > .postnote-qtext')?.textContent).toBe('頁面外層譯文…');
+    expect(sheet.querySelector('.postnote-nest .postnote-qtext')?.textContent).toBe('頁面內層譯文…');
+    const cached = snapshotOf(node.rest_id)!.data.quote;
+    if (cached.kind !== 'readable') throw new Error('missing quote');
+    expect(bodyText(cached.body)).toContain('PR Review');
+  });
+
+  it.each([false, true])('uses quote choices for absent ancestors but respects rendered ancestors (%s)', async (rendered) => {
+    const translatedQuote = {
+      ...nestedNodes[1],
+      grok_translated_post_with_availability: { is_available: true, data: { translation: '祖先引用完整譯文', entities: {} } },
+    };
+    const root: Node = {
+      ...threadNodes[0],
+      quoted_status_result: { result: translatedQuote },
+    };
+    const reply: Node = {
+      ...threadNodes[1],
+      quoted_status_result: { result: translatedQuote },
+    };
+    recordTweets(JSON.stringify([root, reply]));
+    if (rendered) {
+      const ancestor = buildPost({ id: root.rest_id, handle: 'user1', text: '祖先' });
+      attachQuote(ancestor, { text: '原文引用' });
+      document.body.append(ancestor);
+    }
+    const article = buildPost({ id: reply.rest_id, handle: 'user1', text: '回复' });
+    attachQuote(article, { text: '引用譯文…' }).prepend(
+      Object.assign(document.createElement('span'), { textContent: '翻譯自英文' }),
+    );
+    const sheet = await exportPost(article);
+    const posts = sheet.querySelectorAll('.postnote-post');
+    expect(posts).toHaveLength(2);
+    expect(posts[0].querySelector('.postnote-qtext')?.textContent)
+      .toBe(rendered ? bodyText(snapshot(translatedQuote).data.body) : '祖先引用完整譯文');
+    expect(posts[1].querySelector('.postnote-qtext')?.textContent).toBe('祖先引用完整譯文');
+    expect(posts[0].querySelector('.postnote-text')?.textContent).toContain('Introducing');
   });
 
   it('keeps a crowded entry next to the caret across scans and returns it when room grows', () => {

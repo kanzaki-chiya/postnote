@@ -266,6 +266,39 @@ function findQuoteWrapper(article: HTMLElement): Element | null {
   return outermost ?? null;
 }
 
+/** Each quote chooses its own language, independently of the main post. */
+export function quoteTranslationStates(article: HTMLElement): boolean[] {
+  const states: boolean[] = [];
+  let wrapper = findQuoteWrapper(article);
+  for (let depth = 0; depth < 2; depth++) {
+    const inner = wrapper ? findQuoteWrapper(wrapper as HTMLElement) : null;
+    states.push(Boolean(wrapper && leafElements(wrapper).some(
+      (element) => isOutside(element, inner) &&
+        /^(?:翻譯自|翻译自|Translated from)/i.test(collapse(element.textContent)),
+    )));
+    wrapper = inner;
+  }
+  return states;
+}
+
+/** Prefer full snapshot translations; only missing translations use DOM text. */
+export function withQuoteTranslations(
+  quote: Quote,
+  article: HTMLElement | null,
+  states: readonly boolean[],
+): Quote {
+  function select(current: Quote, wrapper: Element | null, depth: number): Quote {
+    if (current.kind !== 'readable') return current;
+    const inner = wrapper ? findQuoteWrapper(wrapper as HTMLElement) : null;
+    const text = wrapper ? findTextRoot(wrapper as HTMLElement, inner) : null;
+    const body = states[depth]
+      ? current.translatedBody ?? (text ? readBody(text) : current.body)
+      : current.body;
+    return { ...current, body, nested: select(current.nested, inner, depth + 1) };
+  }
+  return select(quote, article ? findQuoteWrapper(article) : null, 0);
+}
+
 /** The link X draws inside a quote box in place of the quoted post's poll. */
 const QUOTE_POLL_TEXT = /^(?:显示此投票|顯示此投票|show this poll)$/i;
 

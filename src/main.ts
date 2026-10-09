@@ -49,9 +49,11 @@ import {
   hasCollapsedText,
   ownPollElement,
   postTextLength,
+  quoteTranslationStates,
   readPollElement,
   readTweet,
   showsTranslation,
+  withQuoteTranslations,
 } from './x-page';
 
 const ENTRY_CLASS = 'postnote-entry';
@@ -405,6 +407,7 @@ async function readPost(
       if (!visible.ok) return visible;
       data = { ...data, body: visible.data.body };
     }
+    data = { ...data, quote: withQuoteTranslations(data.quote, article, quoteTranslationStates(article)) };
     data = withPollDisplay(
       data,
       ownPollElement(article),
@@ -493,6 +496,7 @@ async function savePost(article: HTMLElement, button: HTMLButtonElement): Promis
     const clickedId = getArticleStatusId(article);
     const clickedSnap = clickedId ? snapshotOf(clickedId) : undefined;
     const preferTranslation = Boolean(clickedSnap?.translatedBody) && showsTranslation(article);
+    const preferQuoteTranslations = quoteTranslationStates(article);
 
     const chain = ancestorPath(clicked.data.id, parentOf);
     const ancestorIds = chain.ids.filter((id) => id !== clicked.data.id);
@@ -513,7 +517,10 @@ async function savePost(article: HTMLElement, button: HTMLButtonElement): Promis
             blocking
               ? null
               : withPollDisplay(
-                  materialize(snapshot, preferTranslation),
+                  {
+                    ...materialize(snapshot, preferTranslation),
+                    quote: withQuoteTranslations(snapshot.data.quote, null, preferQuoteTranslations),
+                  },
                   null,
                   language,
                   traditional,

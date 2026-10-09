@@ -106,6 +106,7 @@ export type Quote =
       author: Author;
       time: TweetTime;
       body: BodySegment[];
+      translatedBody?: BodySegment[];
       images: Media[];
       /**
        * The quoted post carries a poll; X never draws it inside a quote, it

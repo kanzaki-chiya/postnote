@@ -607,6 +607,7 @@ function quoteFromNode(node: Raw, depth: number, warnings: ExtractWarning[]): Qu
     depth === 0
       ? readNestedQuote(node, warnings)
       : ({ kind: 'none' } as Quote);
+  const translation = translationOf(node);
   return {
     kind: 'readable',
     id,
@@ -614,6 +615,7 @@ function quoteFromNode(node: Raw, depth: number, warnings: ExtractWarning[]): Qu
     author,
     time: snapshotTime(legacyInner.created_at),
     body,
+    ...(translation ? { translatedBody: translation.body } : {}),
     images,
     // A poll inside a quote stays a "Show this poll" line, on both levels.
     poll: /poll/i.test(asString(cardHolder(node)?.name) ?? ''),

@@ -10,10 +10,7 @@ import {
 } from '../src/render';
 import { ROLE_ATTRIBUTE } from '../src/render';
 import type { TweetData } from '../src/tweet';
-// @ts-expect-error vitest runs on node; the project types stay DOM-only
-import { readFileSync } from 'node:fs';
-// @ts-expect-error vitest runs on node; the project types stay DOM-only
-import { resolve } from 'node:path';
+import css from '../src/style.css?raw';
 import { buildPost } from './fixtures/build-page';
 import { readTweet } from '../src/x-page';
 
@@ -382,8 +379,6 @@ describe('rendering a card', () => {
   });
 
   it('keeps the percentage flush with the poll edge and styles the reveal line', () => {
-    // @ts-expect-error node globals are available under vitest
-    const css = readFileSync(resolve(process.cwd(), 'src/style.css'), 'utf8');
     const rule = (name: string) =>
       css.match(new RegExp(`${name}\\s*\\{([^}]*)\\}`))?.[1] ?? '';
     expect(rule('\\.postnote-pr')).toContain('padding: 0 0 0 12px');
