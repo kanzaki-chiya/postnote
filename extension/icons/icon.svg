@@ -1,9 +1,19 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128" role="img" aria-labelledby="postnote-icon-title">
   <title id="postnote-icon-title">推笺 · PostNote</title>
-  <!-- Square badge; the 28px corner radius stays crisp down to 16px. -->
-  <rect width="128" height="128" rx="28" fill="#1d9bf0"/>
-  <!-- Symmetry-cleaned SAVE_ICON from src/main.ts (18×18 glyph inside 24×24), scaled ×4 into 72×72 centred with 28px margins. -->
-  <g transform="translate(16 16) scale(4)" fill="#ffffff">
-    <path d="M3 19.5c0 .83.67 1.5 1.5 1.5h15c.83 0 1.5-.67 1.5-1.5v-6.5h-2v6.5h-14v-6.5h-2v6.5zM11 13.07l-3.54-3.54-1.42 1.42L12 16.91l5.96-5.96-1.42-1.42L13 13.07V3h-2v10.07z"/>
-  </g>
+  <defs>
+    <linearGradient id="postnote-bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#22a4f8"/>
+      <stop offset="100%" stop-color="#1585d1"/>
+    </linearGradient>
+  </defs>
+  <!-- Rounded square badge; 28px corner radius stays crisp down to 16px. -->
+  <rect width="128" height="128" rx="28" fill="url(#postnote-bg)"/>
+  <!-- Two linked post nodes (76×76 centred with 26px margins) representing single & thread export. -->
+  <rect x="34" y="44" width="8" height="40" rx="4" fill="#ffffff" opacity="0.55"/>
+  <circle cx="38" cy="38" r="12" fill="#ffffff"/>
+  <circle cx="38" cy="90" r="12" fill="#ffffff"/>
+  <rect x="60" y="27.5" width="42" height="9.5" rx="4.75" fill="#ffffff"/>
+  <rect x="60" y="42.5" width="28" height="7.5" rx="3.75" fill="#ffffff" opacity="0.72"/>
+  <rect x="60" y="79.5" width="42" height="9.5" rx="4.75" fill="#ffffff"/>
+  <rect x="60" y="94.5" width="32" height="7.5" rx="3.75" fill="#ffffff" opacity="0.72"/>
 </svg>
