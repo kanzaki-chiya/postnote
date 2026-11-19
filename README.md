@@ -1,10 +1,12 @@
 # 推笺 · PostNote
 
+简体中文 | [English](README_en.md)
+
 > 把值得留下的推文，存成一张图。
 
-运行在 X / Twitter 页面上的油猴脚本。点一下推文旁的 PostNote 图标，直接生成并下载这张图片。
+运行在 X / Twitter 页面上的 Chrome 扩展或油猴脚本。点一下推文旁的 PostNote 图标，直接生成并下载这张图片。
 
-当前版本：**0.5.0**
+当前版本：**0.6.0**
 
 ---
 
@@ -47,14 +49,31 @@
 
 ## 安装
 
+PostNote 有 Chrome 扩展和油猴脚本两种安装方式，功能与导出的图片完全一致，装一种就够了。
+
+### Chrome 扩展（推荐）
+
+商店上架前，请从 [Releases](https://github.com/kanzaki-chiya/postnote/releases) 下载 `postnote-chrome-0.6.0.zip`（或最新版本的 `postnote-chrome-*.zip`），然后：
+
+1. 解压下载的 zip。
+2. 打开 `chrome://extensions/`，开启右上角的「开发者模式」。
+3. 点「加载已解压的扩展程序」，选择解压出来的目录。
+4. 刷新 `x.com` / `twitter.com` 页面，在推文操作栏旁点 PostNote 图标。
+
+### 油猴脚本（Tampermonkey）
+
 1. 安装 [Tampermonkey](https://www.tampermonkey.net/)。
 2. 打开 [最新版本的 postnote.user.js](https://github.com/kanzaki-chiya/postnote/releases/latest/download/postnote.user.js)，
    Tampermonkey 会弹出安装页，点「安装」。也可以在 [Releases](https://github.com/kanzaki-chiya/postnote/releases) 里选择其他版本。
 3. 刷新任意 `x.com` / `twitter.com` 页面，在推文操作栏旁点 PostNote 图标。
 
+> **同时启用 Chrome 扩展和油猴脚本可能会出现两个入口或互相干扰，请只保留其中一个。**
+
 第一次保存时浏览器可能询问是否允许下载多个文件，允许后即可连续保存。
 
-与旧脚本并行时请自行停用其中一个，PostNote 不会动你的其他安装。
+## 隐私
+
+不收集、不上传任何数据；图片在本地生成，只读取页面已经加载的推文数据和 X 自己的图片服务器。详见 [隐私说明](PRIVACY.md)。
 
 ## 本地开发
 
@@ -62,10 +81,10 @@
 npm install
 npm run dev      # 开发版，按终端提示安装
 npm test         # vitest
-npm run build    # 类型检查 + 产出 dist/postnote.user.js
+npm run build    # 类型检查 + 产出 dist/postnote.user.js、dist/extension/、dist/postnote-chrome-<版本>.zip
 ```
 
-版本号只在 `package.json` 里维护，脚本头在构建时读取。
+版本号只在 `package.json` 里维护，构建时读取：油猴脚本头与扩展 manifest 都用这个版本。
 
 ## 已知限制
 
