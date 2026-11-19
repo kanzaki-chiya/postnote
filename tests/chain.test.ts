@@ -2,7 +2,7 @@
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ancestorPath } from '../src/chain';
-import { forgetAll, parentOf, recordTweets, watchNetwork } from '../src/x-network';
+import { forgetAll, hookNetwork, parentOf, recordTweets, watchNetwork } from '../src/x-network';
 
 const PAYLOAD = JSON.stringify({
   data: {
@@ -136,3 +136,84 @@ describe('the ancestor path', () => {
     expect(outcome).toMatchObject({ complete: false, reason: 'too-deep', ids: ['n6', 'n7', 'n8', 'n9'] });
   });
 });
+
+describe('hookNetwork', () => {
+  it('observes fetch GraphQL responses without altering what the caller receives', async () => {
+    const observed: string[] = [];
+    const target = {
+      fetch: vi.fn(async (input: RequestInfo | URL) => {
+        const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+        const body = url.includes('/graphql/') ? '{"ok":"graphql"}' : '{"ok":"other"}';
+        return new Response(body, { status: 201, headers: { 'x-test': 'kept' } });
+      }) as unknown as typeof fetch,
+    };
+
+    hookNetwork(target, (text) => observed.push(text));
+
+    const other = await target.fetch('https://x.com/i/api/1.1/status.json');
+    expect(await other.text()).toBe('{"ok":"other"}');
+    expect(observed).toEqual([]);
+
+    const gql = await target.fetch('https://x.com/i/api/graphql/abc/TweetDetail');
+    expect(gql.status).toBe(201);
+    expect(gql.headers.get('x-test')).toBe('kept');
+    expect(await gql.text()).toBe('{"ok":"graphql"}');
+    await vi.waitFor(() => {
+      expect(observed).toEqual(['{"ok":"graphql"}']);
+    });
+  });
+
+  it('observes XMLHttpRequest GraphQL responses without affecting the page response', () => {
+    const observed: string[] = [];
+
+    class FakeXhr {
+      private listeners: Record<string, (() => void)[]> = {};
+      openedMethod = '';
+      openedUrl = '';
+      responseText = '';
+
+      addEventListener(event: string, listener: () => void): void {
+        (this.listeners[event] ??= []).push(listener);
+      }
+
+      open(method: string, url: string | URL): void {
+        this.openedMethod = method;
+        this.openedUrl = String(url);
+      }
+
+      deliver(body: string): void {
+        this.responseText = body;
+        for (const listener of this.listeners.load ?? []) listener();
+      }
+    }
+
+    const target = { XMLHttpRequest: FakeXhr as unknown as typeof XMLHttpRequest };
+    hookNetwork(target, (text) => observed.push(text));
+
+    const nonGql = new FakeXhr();
+    nonGql.open('GET', 'https://x.com/i/api/1.1/home.json');
+    nonGql.deliver('ignored');
+    expect(nonGql.responseText).toBe('ignored');
+    expect(observed).toEqual([]);
+
+    const gql = new FakeXhr();
+    gql.open('GET', 'https://x.com/i/api/graphql/xyz/TweetDetail');
+    gql.deliver('{"data":{"tweet":1}}');
+    expect(gql.openedMethod).toBe('GET');
+    expect(gql.openedUrl).toBe('https://x.com/i/api/graphql/xyz/TweetDetail');
+    expect(gql.responseText).toBe('{"data":{"tweet":1}}');
+    expect(observed).toEqual(['{"data":{"tweet":1}}']);
+  });
+
+  it('isolates callback errors so page requests still succeed', async () => {
+    const target = {
+      fetch: (async () => new Response('{"data":1}', { status: 200 })) as unknown as typeof fetch,
+    };
+    hookNetwork(target, () => {
+      throw new Error('boom');
+    });
+    const res = await target.fetch('https://x.com/i/api/graphql/abc/Test');
+    expect(await res.text()).toBe('{"data":1}');
+  });
+});
+

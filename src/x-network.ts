@@ -16,8 +16,10 @@
 
 import type { TweetSnapshot } from './x-snapshot';
 import { snapshotFromNode } from './x-snapshot';
+import { hookNetwork, type NetworkTarget } from './network-hook';
 
-const GRAPHQL_MARKER = '/graphql/';
+export { hookNetwork, type NetworkTarget };
+
 const LEGACY_MARKER = '"legacy"';
 const MAX_ENTRIES = 5_000;
 const MAX_NODES = 400_000;
@@ -152,8 +154,6 @@ export function forgetAll(): void {
 
 type WatchTarget = Window & typeof globalThis;
 
-const watched = new WeakSet<object>();
-
 /**
  * Start observing the page's own GraphQL traffic.
  *
@@ -162,51 +162,9 @@ const watched = new WeakSet<object>();
  * object is reached through `unsafeWindow` when the userscript sandbox has it.
  */
 export function watchNetwork(explicit?: WatchTarget): void {
-  const target = explicit ?? ((globalThis as { unsafeWindow?: WatchTarget }).unsafeWindow ?? (globalThis as unknown as WatchTarget));
-  if (!target || watched.has(target)) return;
-  watched.add(target);
-
-  const originalFetch = target.fetch;
-  if (typeof originalFetch === 'function') {
-    target.fetch = function watchedFetch(
-      this: unknown,
-      ...args: Parameters<typeof fetch>
-    ) {
-      return originalFetch.apply(this, args).then((response) => {
-        try {
-          const url = String(response.url || (args[0] as Request)?.url || args[0]);
-          if (url.includes(GRAPHQL_MARKER)) {
-            response
-              .clone()
-              .text()
-              .then((text) => recordTweets(text))
-              .catch(() => undefined);
-          }
-        } catch {
-          // Observing is best effort; the page keeps working either way.
-        }
-        return response;
-      });
-    } as typeof fetch;
-  }
-
-  const Xhr = target.XMLHttpRequest;
-  if (typeof Xhr === 'function' && Xhr.prototype?.open) {
-    const originalOpen = Xhr.prototype.open;
-    Xhr.prototype.open = function watchedOpen(
-      this: XMLHttpRequest,
-      method: string,
-      url: string | URL,
-      ...rest: unknown[]
-    ) {
-      this.addEventListener('load', () => {
-        try {
-          if (String(url).includes(GRAPHQL_MARKER)) recordTweets(this.responseText);
-        } catch {
-          // Same as above: never break the page's own request.
-        }
-      });
-      return (originalOpen as (...a: unknown[]) => void).call(this, method, url, ...rest);
-    } as typeof Xhr.prototype.open;
-  }
+  const target =
+    explicit ??
+    ((globalThis as { unsafeWindow?: WatchTarget }).unsafeWindow ??
+      (globalThis as unknown as WatchTarget));
+  hookNetwork(target, recordTweets);
 }
