@@ -13,6 +13,7 @@
 
 import { snapdom } from '@zumer/snapdom';
 import type { ExportFailure } from './messages';
+import type { Platform } from './platform';
 import {
   ROLE_ATTRIBUTE,
   applyAvatarPlaceholder,
@@ -46,7 +47,7 @@ const PREPARE_BUDGET_MS = 45_000;
 const FONT_TIMEOUT_MS = 2_000;
 const RESOURCE_CONCURRENCY = 4;
 
-/** Hosts PostNote is allowed to fetch through the userscript request API. */
+/** Hosts PostNote is allowed to fetch through the platform image fetcher. */
 const ALLOWED_MEDIA_HOSTS: Record<string, true> = {
   'pbs.twimg.com': true,
   'abs.twimg.com': true,
@@ -79,72 +80,8 @@ export type PrepareReport = {
   fontTimedOut: boolean;
 };
 
-type GmResponse = { status: number; response: Blob | null };
-
-type GmDetails = {
-  method: 'GET';
-  url: string;
-  responseType: 'blob';
-  timeout: number;
-  onload: (response: GmResponse) => void;
-  onerror: () => void;
-  ontimeout: () => void;
-  onabort: () => void;
-};
-
-type GmRuntime = typeof globalThis & {
-  GM?: { xmlHttpRequest?: (details: GmDetails) => void };
-  GM_xmlhttpRequest?: (details: GmDetails) => void;
-};
-
-const runtime = globalThis as GmRuntime;
-
 function isAborted(signal?: AbortSignal): boolean {
   return Boolean(signal?.aborted);
-}
-
-/** Fetch through the userscript API, which is not subject to page CORS. */
-function requestBlob(url: string, timeoutMs: number, signal?: AbortSignal): Promise<Blob | null> {
-  const request = runtime.GM?.xmlHttpRequest ?? runtime.GM_xmlhttpRequest;
-  if (typeof request !== 'function') return Promise.resolve(null);
-
-  const { promise, resolve } = Promise.withResolvers<Blob | null>();
-  let settled = false;
-  const finish = (blob: Blob | null) => {
-    if (settled) return;
-    settled = true;
-    signal?.removeEventListener('abort', onAbort);
-    resolve(blob);
-  };
-  const onAbort = () => finish(null);
-
-  signal?.addEventListener('abort', onAbort, { once: true });
-  try {
-    request.call(runtime, {
-      method: 'GET',
-      url,
-      responseType: 'blob',
-      timeout: timeoutMs,
-      onload: (response) =>
-        finish(response.status >= 200 && response.status < 300 ? response.response : null),
-      onerror: () => finish(null),
-      ontimeout: () => finish(null),
-      onabort: () => finish(null),
-    });
-  } catch {
-    finish(null);
-  }
-  return promise;
-}
-
-function blobToDataUrl(blob: Blob): Promise<string | null> {
-  const { promise, resolve } = Promise.withResolvers<string | null>();
-  const reader = new FileReader();
-  reader.onloadend = () =>
-    resolve(typeof reader.result === 'string' ? reader.result : null);
-  reader.onerror = () => resolve(null);
-  reader.readAsDataURL(blob);
-  return promise;
 }
 
 /**
@@ -230,7 +167,12 @@ function canDegrade(role: ResourceRole, image: HTMLImageElement): boolean {
  */
 export async function prepareCard(
   deck: HTMLElement,
-  options: { cache: Map<string, string>; signal?: AbortSignal; timeoutMs?: number },
+  options: {
+    cache: Map<string, string>;
+    platform?: Pick<Platform, 'fetchImage'>;
+    signal?: AbortSignal;
+    timeoutMs?: number;
+  },
 ): Promise<PrepareReport> {
   const resourceTimeout = options.timeoutMs ?? RESOURCE_TIMEOUT_MS;
   const deadline = Date.now() + PREPARE_BUDGET_MS;
@@ -254,9 +196,8 @@ export async function prepareCard(
     const load = async (url: string): Promise<ResourceFailure['reason'] | null> => {
       if (!url.startsWith('data:') && isAllowedHost(url)) {
         let resolved = options.cache.get(url) ?? '';
-        if (!resolved) {
-          const blob = await requestBlob(url, remaining(), options.signal);
-          resolved = blob ? (await blobToDataUrl(blob)) ?? '' : '';
+        if (!resolved && options.platform) {
+          resolved = (await options.platform.fetchImage(url, remaining(), options.signal)) ?? '';
           if (resolved) options.cache.set(url, resolved);
         }
         if (resolved) image.src = resolved;

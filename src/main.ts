@@ -36,7 +36,8 @@ import type { ExtractFailure, ExtractWarning, PageLanguage, TweetData } from './
 import { renderSheet } from './render';
 import { showToast } from './toast';
 import { ancestorPath } from './chain';
-import { parentOf, snapshotOf, watchNetwork } from './x-network';
+import type { Platform } from './platform';
+import { parentOf, snapshotOf } from './x-network';
 import type { TweetSnapshot } from './x-snapshot';
 import {
   expandTweetText,
@@ -68,6 +69,12 @@ const CARET_SELECTOR = '[data-testid="caret"]';
 const SAVE_ICON =
   '<svg viewBox="0 0 24 24" aria-hidden="true"><g><path d="M3 19.5c0 .83.67 1.5 1.5 1.5h15c.83 0 1.5-.67 1.5-1.5v-6.5h-2v6.5h-15v-6.5h-2v6.5zM10.46 13.07l-3.54-3.54-1.42 1.42L12 17.41l6.5-6.46-1.42-1.42-3.54 3.54V3h-2v10.07z"></path></g></svg>';
 
+const defaultPlatform: Platform = {
+  fetchImage: async () => null,
+  download: (blob, fileName) => downloadBlob(blob, fileName),
+};
+
+let activePlatform: Platform = defaultPlatform;
 let scanTimer: number | null = null;
 let observer: MutationObserver | null = null;
 let lastPath = '';
@@ -441,7 +448,11 @@ async function prepareSheet(
   controller: AbortController,
   sheet: HTMLElement,
 ): Promise<PrepareOutcome> {
-  const report = await prepareCard(sheet, { cache: new Map(), signal: controller.signal });
+  const report = await prepareCard(sheet, {
+    cache: new Map(),
+    platform: activePlatform,
+    signal: controller.signal,
+  });
   return {
     blocking: report.blocking.length,
     degraded: report.degraded.length > 0,
@@ -603,7 +614,7 @@ async function savePost(article: HTMLElement, button: HTMLButtonElement): Promis
     if (controller.signal.aborted) return;
 
     const root = posts[0];
-    downloadBlob(
+    activePlatform.download(
       blob,
       posts.length === 1
         ? buildFileName(root.author.handle, root.id)
@@ -650,13 +661,14 @@ function startObserver(): void {
   scan();
 }
 
-export function install(): void {
+export function install(platform: Platform = defaultPlatform): void {
   if (typeof document === 'undefined' || typeof window === 'undefined') return;
   const state = window as Window & { __postnoteInstalled?: boolean };
   if (state.__postnoteInstalled) return;
   state.__postnoteInstalled = true;
+  activePlatform = platform;
 
-  watchNetwork();
+
   if (document.body) startObserver();
   else document.addEventListener('DOMContentLoaded', startObserver, { once: true });
 }
@@ -682,6 +694,7 @@ export function uninstall(): void {
   saving = null;
   document.querySelectorAll(`.${ROOT_CLASS}`).forEach((node) => node.remove());
   (window as Window & { __postnoteInstalled?: boolean }).__postnoteInstalled = false;
+  activePlatform = defaultPlatform;
 }
 
-if (typeof document !== 'undefined' && import.meta.env.MODE !== 'test') install();
+

@@ -17,7 +17,7 @@ export default defineConfig({
   },
   plugins: [
     monkey({
-      entry: 'src/main.ts',
+      entry: 'src/entry-userscript.ts',
       userscript: {
         name: '推笺 · PostNote',
         namespace: 'postnote',

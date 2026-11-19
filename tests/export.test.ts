@@ -162,6 +162,26 @@ describe('preparing resources', () => {
     expect(report.blocking).toHaveLength(0);
     expect(report.degraded).toHaveLength(0);
   });
+
+  it('fetches allowed hosts through the injected platform and caches results', async () => {
+    const url = 'https://pbs.twimg.com/media/sample.jpg';
+    const card = cardWith({ images: [{ kind: 'photo', src: url, alt: '' }] });
+    const fetchImage = vi.fn(async () => 'data:image/png;base64,fake');
+    const cache = new Map<string, string>();
+    const report = await prepareCard(card, {
+      cache,
+      platform: { fetchImage },
+      ...SHORT_TIMEOUT,
+    });
+    expect(fetchImage).toHaveBeenCalledTimes(1);
+    expect(fetchImage).toHaveBeenCalledWith(url, expect.any(Number), undefined);
+    expect(cache.get(url)).toBe('data:image/png;base64,fake');
+    expect(report.blocking.every((entry) => entry.reason === 'decode')).toBe(true);
+
+    const card2 = cardWith({ images: [{ kind: 'photo', src: url, alt: '' }] });
+    await prepareCard(card2, { cache, platform: { fetchImage }, ...SHORT_TIMEOUT });
+    expect(fetchImage).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe('capture planning', () => {
