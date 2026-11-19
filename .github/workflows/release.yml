@@ -1,0 +1,56 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Publish GitHub Release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Verify tag and extract release notes
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1; then
+            echo "Release already exists" >&2
+            exit 1
+          fi
+          node scripts/release-notes.mjs --tag "${GITHUB_REF_NAME}" --out release-notes.md
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run tests
+        run: npm test
+
+      - name: Build userscript and extension
+        run: npm run build
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          ZIP="dist/postnote-chrome-${VERSION}.zip"
+          if [ ! -f "${ZIP}" ]; then
+            echo "Missing build artifact: ${ZIP}" >&2
+            exit 1
+          fi
+          gh release create "${GITHUB_REF_NAME}" \
+            dist/postnote.user.js "${ZIP}" \
+            --title "推笺 PostNote ${VERSION}" \
+            --notes-file release-notes.md
