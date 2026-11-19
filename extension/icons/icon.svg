@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128" role="img" aria-labelledby="postnote-icon-title">
+  <title id="postnote-icon-title">推笺 · PostNote</title>
+  <!-- Square badge; the 28px corner radius stays crisp down to 16px. -->
+  <rect width="128" height="128" rx="28" fill="#1d9bf0"/>
+  <!-- Symmetry-cleaned SAVE_ICON from src/main.ts (18×18 glyph inside 24×24), scaled ×4 into 72×72 centred with 28px margins. -->
+  <g transform="translate(16 16) scale(4)" fill="#ffffff">
+    <path d="M3 19.5c0 .83.67 1.5 1.5 1.5h15c.83 0 1.5-.67 1.5-1.5v-6.5h-2v6.5h-14v-6.5h-2v6.5zM11 13.07l-3.54-3.54-1.42 1.42L12 16.91l5.96-5.96-1.42-1.42L13 13.07V3h-2v10.07z"/>
+  </g>
+</svg>

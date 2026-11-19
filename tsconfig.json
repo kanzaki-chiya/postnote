@@ -9,5 +9,5 @@
     "noEmit": true,
     "types": ["vite/client"]
   },
-  "include": ["src", "tests", "vite.config.ts"]
+  "include": ["src", "extension", "tests", "vite.config.ts", "vite.config.extension.ts"]
 }
